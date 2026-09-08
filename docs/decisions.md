@@ -498,3 +498,20 @@ revisiting before that happens — not blocking today's use.
 (`Kamour@2026`, all 8 accounts) now that the login endpoint is internet-reachable. Not actioned
 silently — changing it without warning would lock out the real team mid-use. Flagged again,
 left for the user to schedule.
+
+### D-061 · 2026-09-08 · ID-picker made the live login page, not localhost-only
+User: "just push to github and deploy with new version like i have said i want basic login page
+with all ids." Changed `src/app/login/page.tsx` and `actions.ts`: the eight-ID click-to-login
+picker (built by Codex, previously gated to `localhost`/`127.0.0.1`) is now controlled purely by
+a server env var, with no host restriction, so it can run on the live Vercel deployment. Env var
+renamed `KAMOUR_LOCAL_ACCOUNT_PICKER` -> `KAMOUR_ID_PICKER` since "local" no longer describes it.
+**Tradeoff, flagged not hidden:** anyone who reaches the deployed URL can now sign in as any of
+the eight team members with one click and zero typed credentials — the picker asks nothing of the
+visitor. Auth still goes through real Supabase `signInWithPassword` server-side using
+`SEED_TEMP_PASSWORD` (never sent to the browser), and an inactive profile is still rejected. This
+matches the original spec ("ids without email authentication for now") and is accepted for a
+small trusted internal team — documented in `docs/design/local-account-picker.md` as an explicit,
+revisitable tradeoff.
+**Still required to go live:** `KAMOUR_ID_PICKER=1` and `SEED_TEMP_PASSWORD` must be set as
+server-side env vars in the Vercel project (never `NEXT_PUBLIC_*`) — no Vercel dashboard/API
+access here, so the user needs to set these in Vercel's project settings and redeploy.
