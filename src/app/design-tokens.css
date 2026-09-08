@@ -1,0 +1,55 @@
+/* Kamour Sales OS · Astra review 01. Copy these tokens after design review. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f4f3;
+  --surface: #ffffff;
+  --border: #d4d8d6;
+  --border-str: #818b86;
+  --text: #20262d;
+  --text-dim: #58616b;
+  --accent: #315dc8;
+  --accent-bg: #eaf0ff;
+  --on-accent: #ffffff;
+  --hover: #f0f2f1;
+  --paid: #226347;
+  --paid-bg: #e5f1e9;
+  --pend: #80530c;
+  --pend-bg: #faf0d9;
+  --stop: #a0333c;
+  --stop-bg: #fbe9ea;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #151918;
+  --surface: #1c211f;
+  --border: #3b4540;
+  --border-str: #75837b;
+  --text: #e9eeea;
+  --text-dim: #b0bcb4;
+  --accent: #9cb9ff;
+  --accent-bg: #283750;
+  --on-accent: #182238;
+  --hover: #282f2b;
+  --paid: #9dd5af;
+  --paid-bg: #253c2e;
+  --pend: #e9c078;
+  --pend-bg: #403520;
+  --stop: #f2adb1;
+  --stop-bg: #462b30;
+}
+:root {
+  --font: Inter, "Segoe UI", Arial, sans-serif;
+  --font-size: 13px;
+  --row-h: 32px;
+  --header-h: 36px;
+  --cell-pad: 6px 10px;
+  --sidebar-w: 184px;
+  --titlebar-h: 28px;
+  --toolbar-h: 40px;
+  --footer-h: 24px;
+  --radius: 4px;
+  --pill-h: 18px;
+  --focus-w: 2px;
+  --duration: 120ms;
+}

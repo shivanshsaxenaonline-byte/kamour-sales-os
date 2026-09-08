@@ -1,0 +1,43 @@
+{
+  "name": "kamour-sales-os",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:inspect": "node scripts/inspect-db.mjs",
+    "db:migrate": "node scripts/migrate.mjs up",
+    "db:status": "node scripts/migrate.mjs status",
+    "db:rollback": "node scripts/migrate.mjs down",
+    "test:rls": "node scripts/test-rls.mjs",
+    "db:backup": "node scripts/backup.mjs",
+    "db:seed-team": "node scripts/seed-team.mjs",
+    "import:sheets": "node scripts/import-sheets.mjs",
+    "db:backup:cloud": "node scripts/backup-upload.mjs",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.6",
+    "@supabase/supabase-js": "^2.116.0",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-table": "^9.2.4",
+    "@tanstack/react-virtual": "^3.14.11",
+    "next": "^15.5.25",
+    "pg": "^8.13.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "postcss": "^8.5.28"
+  }
+}
