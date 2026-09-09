@@ -625,3 +625,30 @@ yet wired into Today (`ModuleGrid`), which is where reps start their day; nothin
 after this one-time import, so a cutover date is needed rather than parallel running; and the
 Apps Script column-shift bug from 2026-08-03 is still unfixed in the live script — irrelevant if
 the Sheet is retired, corrupting if it is not.
+
+### D-067 · 2026-09-09 · Segment removed; customer history added; three import bugs fixed
+User: "Alka ke paas kuch is tarah se screen aani chahiye RRR orders wali, aur usko open kare to
+uski order history and followup history. I think ye segment wali cheez is just a confusion so
+completely remove that." Migration **027** rebuilds `v_rrr_queue` without any segment column and
+adds `v_rrr_customer_orders` / `v_rrr_customer_followups`. Removing it also retires the wart D-065
+recorded: `segment` meant one thing in PROJECT.md and another on the team's dashboard under the
+same A1..C2 labels. `customers.segment` itself is untouched — this changed a screen, not anyone's
+data. The list now carries what the team actually reads: payment profile, AOV, days since order,
+activity, and follow-up state; opening a row shows every order (with products) and every call.
+**Three real defects surfaced while checking the numbers against the user's own screenshot, all
+fixed by `scripts/fix-import-artifacts.mjs` (dry-run by default):**
+1. **172 duplicate orders.** The July "Medicine Order Record" import and the KM002 Master Sheet
+   cover the same July 2026 orders. The two copies carry different fields — July has address,
+   courier and payment mode, KM002 has the order source — so they were merged (source copied onto
+   the July row, follow-ups re-pointed, then the duplicate deleted), not simply de-duplicated.
+2. **149 follow-ups with an outcome but no completion.** Their sheet recorded a status with no
+   timestamp, so they imported as pending work that was already done, inflating the queue. An
+   outcome is proof the call happened; the queue date is the only date the source offers.
+3. **Every lifetime value understated by about a tenth.** `orders.amount` is gross in this schema
+   (`orders_discount_not_over_amount` only makes sense that way) and `lifetime_value` is
+   `sum(amount - discount)`, but the sheet's "Order Amount" is already net. Proof rather than
+   assumption: sheet row 1209 has amount 499 and discount 500, impossible if amount were gross.
+   Discount is zeroed on legacy rows so `amount` means one thing table-wide. The discount figures
+   are **not preserved** in the database; they remain in the source sheet and in data/incoming.
+Verified against the user's own dashboard afterwards: Nitin 13 orders ₹45,685, Guruprasad 10 /
+₹43,958, Ankit 9 / ₹36,911 — order counts and values now match exactly.

@@ -840,3 +840,106 @@
   gap: 8px;
   margin-top: 16px;
 }
+
+/* ---- RRR: customer cell and detail panel ------------------------------ */
+.rrr-customer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.rrr-customer:hover strong {
+  text-decoration: underline;
+}
+.rrr-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+.rrr-customer-copy {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.rrr-panel {
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  overflow: auto;
+  padding: 20px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-str);
+  border-radius: 6px;
+}
+.rrr-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.rrr-panel-head-actions {
+  display: flex;
+  gap: 8px;
+}
+.rrr-panel-section {
+  margin-top: 18px;
+}
+.rrr-panel-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.rrr-panel-scroll {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.rrr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.rrr-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+}
+.rrr-timeline li {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.rrr-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.rrr-timeline-note {
+  margin-top: 5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}

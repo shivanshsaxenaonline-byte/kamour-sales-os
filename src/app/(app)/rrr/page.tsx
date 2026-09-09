@@ -25,7 +25,7 @@ export default async function RrrPage() {
   // that grows; filtering is the next thing to build here if it does.
   const { data: rows, error } = await supabase
     .from('v_rrr_queue')
-    .select('customer_id, full_name, phone_e164, rfm_segment, lifetime_orders, lifetime_value, last_order_on, days_since_order, current_owner_id, owner_name, attempts, last_contacted_on, last_outcome, next_due_on, last_order_source, is_dnd, open_followup_id, last_order_id')
+    .select('customer_id, full_name, phone_e164, lifetime_orders, lifetime_value, aov, is_repeat_buyer, last_order_on, days_since_order, payment_profile, current_owner_id, owner_name, is_dnd, attempts, last_contacted_on, last_outcome, next_due_on, open_followup_id, last_order_id, last_order_source')
     .order('current_owner_id', { ascending: true, nullsFirst: true })
     .order('lifetime_value', { ascending: false })
     .limit(500);

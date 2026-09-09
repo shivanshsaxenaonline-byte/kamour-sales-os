@@ -3,82 +3,110 @@
 import { useMemo, useState, useTransition } from 'react';
 import { assignRrr } from './actions';
 import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
+import { CustomerPanel } from './customer-panel';
 
 export type RrrRow = {
   customer_id: string;
   full_name: string;
   phone_e164: string;
-  rfm_segment: string | null;
   lifetime_orders: number;
   lifetime_value: number;
+  aov: number | null;
+  is_repeat_buyer: boolean;
   last_order_on: string | null;
   days_since_order: number | null;
+  payment_profile: string | null;
   current_owner_id: string | null;
   owner_name: string | null;
+  is_dnd: boolean;
   attempts: number | null;
   last_contacted_on: string | null;
   last_outcome: string | null;
   next_due_on: string | null;
-  last_order_source: string | null;
-  is_dnd: boolean;
   open_followup_id: string | null;
   last_order_id: string | null;
+  last_order_source: string | null;
 };
 
 export type Rep = { id: string; full_name: string; role: string };
 
-const SEGMENT_LABEL: Record<string, string> = {
-  A1: 'Loyal repeater',
-  A2: 'Warm repeater',
-  B1: 'One-time recent',
-  B2: 'One-time old',
-  C1: 'Dormant',
-  C2: 'Lapsed / cold',
+const OUTCOME_LABEL: Record<string, string> = {
+  order_placed: 'Order placed',
+  will_buy: 'Interested',
+  not_interested: 'Not interested',
+  no_answer: 'Call not picked',
+  busy: 'Busy',
+  wrong_number: 'Wrong number',
+  connected: 'Baat hui',
+  medicine_not_finished: 'Medicine not finished',
+  will_update_later: 'Will update later',
 };
-
-// Positive, neutral and negative read at a glance; anything unmapped falls
-// through to the neutral pill rather than being invented a colour.
 const OUTCOME_TONE: Record<string, string> = {
-  order_placed: 'positive',
-  will_buy: 'positive',
-  connected: 'positive',
-  medicine_not_finished: 'attention',
-  will_update_later: 'attention',
-  no_answer: 'attention',
-  busy: 'attention',
-  not_interested: 'critical',
-  wrong_number: 'critical',
+  order_placed: 'positive', will_buy: 'positive', connected: 'positive',
+  medicine_not_finished: 'attention', will_update_later: 'attention',
+  no_answer: 'attention', busy: 'attention',
+  not_interested: 'critical', wrong_number: 'critical',
 };
 
-const money = (n: number) =>
-  '₹' + Math.round(n).toLocaleString('en-IN');
+const money = (n: number | null) =>
+  n == null ? '—' : '₹' + Math.round(n).toLocaleString('en-IN');
 
-const label = (s: string | null) =>
-  s ? s.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase()) : '—';
+const initials = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '?';
+
+/** Active if they bought within 90 days — the same line the team's own
+ *  dashboard draws between a live customer and one going cold. */
+function activity(days: number | null) {
+  if (days == null) return { text: 'No orders', tone: 'dashed' };
+  if (days <= 90) return { text: 'Active', tone: 'positive' };
+  return { text: `${days}d inactive`, tone: days > 180 ? 'critical' : 'attention' };
+}
+
+/** What the follow-up state means today, not what it meant when it was set. */
+function followUpState(r: RrrRow) {
+  if (r.next_due_on) {
+    const days = Math.round(
+      (Date.now() - new Date(`${r.next_due_on}T00:00:00+05:30`).getTime()) / 86_400_000);
+    const last = r.last_outcome ? OUTCOME_LABEL[r.last_outcome] ?? r.last_outcome : '';
+    if (days > 0) return { text: last ? `${last} · ${days}d overdue` : `${days}d overdue`, tone: 'critical' };
+    if (days === 0) return { text: 'Due today', tone: 'attention' };
+    return { text: `Call in ${Math.abs(days)}d`, tone: 'neutral' };
+  }
+  if (r.last_outcome)
+    return {
+      text: OUTCOME_LABEL[r.last_outcome] ?? r.last_outcome,
+      tone: OUTCOME_TONE[r.last_outcome] ?? 'neutral',
+    };
+  return { text: 'Untouched', tone: 'dashed' };
+}
 
 export function RrrTable({
   rows, reps, canAssign, numbers,
 }: { rows: RrrRow[]; reps: Rep[]; canAssign: boolean; numbers: ContactNumber[] }) {
-  const [calling, setCalling] = useState<CallTarget | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [segment, setSegment] = useState('all');
   const [owner, setOwner] = useState('all');
+  const [stage, setStage] = useState('all');
+  const [search, setSearch] = useState('');
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [openRow, setOpenRow] = useState<RrrRow | null>(null);
+  const [calling, setCalling] = useState<CallTarget | null>(null);
 
   const visible = useMemo(() => rows.filter((r) => {
-    if (segment !== 'all' && r.rfm_segment !== segment) return false;
     if (owner === 'unassigned' && r.current_owner_id) return false;
     if (owner !== 'all' && owner !== 'unassigned' && r.current_owner_id !== owner) return false;
+    if (stage === 'untouched' && (r.attempts ?? 0) > 0) return false;
+    if (stage === 'overdue' && !(r.next_due_on && new Date(r.next_due_on) < new Date())) return false;
+    if (stage === 'inactive' && (r.days_since_order ?? 0) <= 90) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!r.full_name.toLowerCase().includes(q) && !r.phone_e164.includes(q)) return false;
+    }
     return true;
-  }), [rows, segment, owner]);
+  }), [rows, owner, stage, search]);
 
-  // Selection survives filtering on purpose — tick a few A1s, switch to C2,
-  // tick a few more, assign the lot. But "select all" only ever means the
-  // rows actually on screen.
   const allShown = visible.length > 0 && visible.every((r) => selected.has(r.customer_id));
-  const selectedCount = selected.size;
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -87,7 +115,6 @@ export function RrrTable({
       return next;
     });
   }
-
   function toggleAllShown() {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -98,24 +125,29 @@ export function RrrTable({
   }
 
   function submit() {
-    if (!selectedCount || !target) return;
+    if (!selected.size || !target) return;
     const ids = [...selected];
     const toName = target === 'unassign'
       ? 'the unassigned pool'
       : reps.find((r) => r.id === target)?.full_name ?? 'that rep';
-
     setMessage(null);
     startTransition(async () => {
       const result = await assignRrr(ids, target === 'unassign' ? null : target);
       if (!result.ok) { setMessage(result.error); return; }
       setSelected(new Set());
-      setMessage(
-        result.moved === 0
-          ? `Nothing changed — those ${ids.length} were already on ${toName}.`
-          : `${result.moved} of ${ids.length} moved to ${toName}.`,
-      );
+      setMessage(result.moved === 0
+        ? `Nothing changed — those ${ids.length} were already on ${toName}.`
+        : `${result.moved} of ${ids.length} moved to ${toName}.`);
     });
   }
+
+  const callTargetFor = (r: RrrRow): CallTarget => ({
+    customerId: r.customer_id,
+    name: r.full_name,
+    phone: r.phone_e164,
+    followupId: r.open_followup_id,
+    orderId: r.last_order_id,
+  });
 
   return (
     <section className="data-grid">
@@ -123,17 +155,27 @@ export function RrrTable({
         <h1>RRR</h1>
         <span className="muted">
           {visible.length.toLocaleString('en-IN')} customers
-          {selectedCount ? ` · ${selectedCount} selected` : ''}
+          {selected.size ? ` · ${selected.size} selected` : ''}
         </span>
 
         <div className="toolbar-spacer" />
 
-        <label className="sr-only" htmlFor="rrr-segment">Segment</label>
-        <select id="rrr-segment" value={segment} onChange={(e) => setSegment(e.target.value)}>
-          <option value="all">All segments</option>
-          {Object.entries(SEGMENT_LABEL).map(([code, text]) => (
-            <option key={code} value={code}>{code} · {text}</option>
-          ))}
+        <label className="grid-search">
+          <span className="sr-only">Search customer</span>
+          <input
+            type="search"
+            value={search}
+            placeholder="Name or mobile number…"
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+
+        <label className="sr-only" htmlFor="rrr-stage">Stage</label>
+        <select id="rrr-stage" value={stage} onChange={(e) => setStage(e.target.value)}>
+          <option value="all">All customers</option>
+          <option value="untouched">Untouched — never called</option>
+          <option value="overdue">Overdue follow-up</option>
+          <option value="inactive">Inactive 90+ days</option>
         </select>
 
         <label className="sr-only" htmlFor="rrr-owner">Owner</label>
@@ -147,22 +189,13 @@ export function RrrTable({
       {canAssign ? (
         <div className="grid-toolbar rrr-assignbar">
           <label className="sr-only" htmlFor="rrr-target">Assign to</label>
-          <select
-            id="rrr-target"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            disabled={pending}
-          >
+          <select id="rrr-target" value={target} onChange={(e) => setTarget(e.target.value)} disabled={pending}>
             <option value="">Assign selected to…</option>
             {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
             <option value="unassign">— Put back in unassigned pool —</option>
           </select>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={pending || !selectedCount || !target}
-          >
-            {pending ? 'Assigning…' : `Assign ${selectedCount || ''}`.trim()}
+          <button type="button" onClick={submit} disabled={pending || !selected.size || !target}>
+            {pending ? 'Assigning…' : `Assign ${selected.size || ''}`.trim()}
           </button>
           {message ? <span className="muted" role="status">{message}</span> : null}
         </div>
@@ -174,101 +207,92 @@ export function RrrTable({
             <tr>
               {canAssign ? (
                 <th style={{ width: 32 }}>
-                  <input
-                    type="checkbox"
-                    checked={allShown}
-                    onChange={toggleAllShown}
-                    aria-label="Select all shown"
-                  />
+                  <input type="checkbox" checked={allShown} onChange={toggleAllShown} aria-label="Select all shown" />
                 </th>
               ) : null}
               <th>Customer</th>
-              <th>Segment</th>
+              <th>Payment</th>
               <th className="num">Orders</th>
-              <th className="num">Lifetime</th>
-              <th className="num">Days since order</th>
-              <th>Last call</th>
-              <th className="num">Tries</th>
-              <th>Owner</th>
-              <th>Source</th>
+              <th className="num">Amount / LTV</th>
+              <th className="num">AOV</th>
+              <th>Last activity</th>
+              <th>Activity</th>
+              <th>Follow-up</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {visible.map((r) => (
-              <tr
-                key={r.customer_id}
-                className={selected.has(r.customer_id) ? 'record-row selected' : 'record-row'}
-              >
-                {canAssign ? (
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(r.customer_id)}
-                      onChange={() => toggle(r.customer_id)}
-                      aria-label={`Select ${r.full_name}`}
-                    />
-                  </td>
-                ) : null}
-                <td>
-                  <strong>{r.full_name}</strong>
-                  <br />
-                  <span className="muted">{r.phone_e164}</span>
-                  {r.is_dnd ? <span className="status-pill critical"> DND</span> : null}
-                </td>
-                <td>
-                  {r.rfm_segment ? (
-                    <span className="status-pill neutral">
-                      {r.rfm_segment} · {SEGMENT_LABEL[r.rfm_segment]}
-                    </span>
-                  ) : '—'}
-                </td>
-                <td className="num">{r.lifetime_orders}</td>
-                <td className="num">{money(r.lifetime_value)}</td>
-                <td className="num">{r.days_since_order ?? '—'}</td>
-                <td>
-                  {r.last_outcome ? (
-                    <span className={`status-pill ${OUTCOME_TONE[r.last_outcome] ?? 'neutral'}`}>
-                      {label(r.last_outcome)}
-                    </span>
-                  ) : <span className="muted">Never called</span>}
-                  {r.last_contacted_on ? (
-                    <>
-                      <br />
-                      <span className="muted">{r.last_contacted_on}</span>
-                    </>
+            {visible.map((r) => {
+              const act = activity(r.days_since_order);
+              const fu = followUpState(r);
+              return (
+                <tr
+                  key={r.customer_id}
+                  className={`record-row ${selected.has(r.customer_id) ? 'selected' : ''}`}
+                >
+                  {canAssign ? (
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.customer_id)}
+                        onChange={() => toggle(r.customer_id)}
+                        aria-label={`Select ${r.full_name}`}
+                      />
+                    </td>
                   ) : null}
-                </td>
-                <td className="num">{r.attempts ?? 0}</td>
-                <td>
-                  {r.owner_name ?? <span className="status-pill dashed">Unassigned</span>}
-                </td>
-                <td className="muted">{r.last_order_source ?? '—'}</td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => setCalling({
-                      customerId: r.customer_id,
-                      name: r.full_name,
-                      phone: r.phone_e164,
-                      followupId: r.open_followup_id,
-                      orderId: r.last_order_id,
-                    })}
-                  >
-                    Log call
-                  </button>
-                </td>
-              </tr>
-            ))}
+
+                  <td>
+                    <button type="button" className="rrr-customer" onClick={() => setOpenRow(r)}>
+                      <span className="rrr-avatar">{initials(r.full_name)}</span>
+                      <span className="rrr-customer-copy">
+                        <strong>{r.full_name}</strong>
+                        <span className="muted">{r.phone_e164}</span>
+                        <span className="muted">
+                          {r.is_repeat_buyer ? 'Repeat buyer' : 'New buyer'}
+                          {r.is_dnd ? ' · DND' : ''}
+                        </span>
+                      </span>
+                    </button>
+                  </td>
+
+                  <td>{r.payment_profile ? <span className="status-pill neutral">{r.payment_profile}</span> : '—'}</td>
+                  <td className="num">{r.lifetime_orders}</td>
+                  <td className="num">{money(r.lifetime_value)}</td>
+                  <td className="num">{money(r.aov)}</td>
+                  <td>
+                    {r.last_order_on ?? '—'}
+                    <br />
+                    <span className="muted">{r.last_order_source ?? 'Order placed'}</span>
+                  </td>
+                  <td><span className={`status-pill ${act.tone}`}>{act.text}</span></td>
+                  <td>
+                    <span className={`status-pill ${fu.tone}`}>{fu.text}</span>
+                    <br />
+                    <span className="muted">{r.owner_name ?? 'Unassigned'}</span>
+                  </td>
+                  <td>
+                    <button type="button" onClick={() => setCalling(callTargetFor(r))}>Log call</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
         {visible.length === 0 ? (
-          <div className="grid-empty">
-            <p>No customers match this filter.</p>
-          </div>
+          <div className="grid-empty"><p>No customers match this filter.</p></div>
         ) : null}
       </div>
+
+      {openRow ? (
+        <CustomerPanel
+          customerId={openRow.customer_id}
+          name={openRow.full_name}
+          phone={openRow.phone_e164}
+          onClose={() => setOpenRow(null)}
+          onLogCall={() => { setCalling(callTargetFor(openRow)); setOpenRow(null); }}
+        />
+      ) : null}
 
       {calling ? (
         <LogCallDialog
