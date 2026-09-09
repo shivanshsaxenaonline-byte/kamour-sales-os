@@ -652,3 +652,32 @@ fixed by `scripts/fix-import-artifacts.mjs` (dry-run by default):**
    are **not preserved** in the database; they remain in the source sheet and in data/incoming.
 Verified against the user's own dashboard afterwards: Nitin 13 orders ₹45,685, Guruprasad 10 /
 ₹43,958, Ankit 9 / ₹36,911 — order counts and values now match exactly.
+
+### D-068 · 2026-09-09 · Getting the rest of the sheet in — and three bugs that surfaced doing it
+User: "so solve it" — 180 sheet rows were still sitting in `import_rejects`. Reviewing each reason
+recovered 50 orders and exposed three defects, one of which had already corrupted live data.
+**Recovered (50 orders):** 27 rows say "Doctor" in Conversion By (the doctor closed it — real
+information, not a name) and 5 say "Vansh" (no user account here). Both now import UNASSIGNED
+rather than being dropped: a real order belongs in the customer's history, and unassigned is
+already this schema's word for "nobody owns this yet" (D-063). The attribution itself is not
+preserved — the sheet keeps it, this database does not. 2 more were the `discount_exceeds_amount`
+rows, which stop being contradictory now that legacy discount is zeroed (D-067). The remaining
+146 have no phone (139) or are blank rows (7) — a customer cannot be identified without a phone,
+so those stay out.
+**Bug 1 — a date format the parser did not know.** 147 Master Sheet rows use "1 Dec 2023"
+(day-first), which `parseDate` did not match, so those orders were written with
+`coalesce(when, now())` — dated the day of the import. Sixteen reached the database that way,
+making three-year-old customers show as **Active** on the RRR screen. Parser extended, the 16
+deleted and re-imported with their real dates.
+**Bug 2 — the order importer was not idempotent.** Re-running it would have doubled the order
+book. It now skips any order already present on the same customer+date+amount key the duplicate
+cleanup uses.
+**Bug 3 — the queue importer's idempotency key was broken by a timezone, and this one bit.**
+`due_at` is written at 00:00 IST, which is 18:30 UTC *the previous day*; the key read
+`due_at::date` in a UTC database, so it returned the day before the sheet's Selection Date and
+never matched. A re-run duplicated the entire call log — 1,575 rows became 3,100 in production
+before it was caught. Key now casts through `Asia/Kolkata`; `scripts/dedupe-followups.mjs` removed
+the 1,525 copies, keeping the earliest of each identical row so genuine same-day second calls
+survive. Verified by running the importer again: 1,575 skipped, nothing duplicated.
+**Where it landed:** 2,021 orders (2,171 sheet rows − 146 unimportable − 4 duplicates within the
+sheets themselves), 1,336 RRR customers, 1,575 logged calls, 184 unassigned orders.

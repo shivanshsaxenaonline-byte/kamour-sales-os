@@ -85,9 +85,16 @@ function parseDate(v) {
   if (blank(v)) return null;
   const s = v.trim();
   let m;
+  // "July 4, 2026" / "Jul 1, 2026"
   if ((m = s.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/))) {
     const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
     if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  }
+  // "1 Dec 2023" — 147 rows in the Master Sheet use this, and missing it sent
+  // them in dated `now()`, which made three-year-old customers look Active.
+  if ((m = s.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/))) {
+    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];
+    if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[1].padStart(2,'0')}`;
   }
   if ((m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/))) {
     let [, d, mo, y] = m;
@@ -189,6 +196,12 @@ async function main() {
     });
   });
 
+  // Re-running must not double the order book. Keyed the same way the
+  // duplicate cleanup keys it: one customer, one date, one amount is one sale.
+  const existingOrders = new Set((await client.query(
+    `select customer_id || '|' || created_at::date || '|' || amount as k from orders`
+  )).rows.map((r) => r.k));
+
   const idByPhone = new Map();
   for (const p of people.values()) {
     const { rows } = await client.query(
@@ -258,24 +271,35 @@ async function main() {
     if (amount == null) { reject(SOURCE, rowNo, 'unparseable_amount', { raw: O.get(r, 'Order Amount') }); continue; }
 
     // Blank "Conversion By" is the normal case on the website tabs — nobody
-    // converted a self-serve checkout — so the order is imported UNASSIGNED
-    // (migration 023) instead of being dropped. A name that is present but
-    // matches no team member is different: that is unreadable data, and it
-    // still gets rejected rather than silently unassigned.
+    // converted a self-serve checkout. Two other values appear that are not
+    // team members either: "Doctor" (27 rows — the doctor closed it directly,
+    // which is information, not a name) and "Vansh" (5 rows — someone with no
+    // user account here). All three import UNASSIGNED (migration 023) rather
+    // than being dropped: a real order with unclear attribution still belongs
+    // in the customer's history, and the RRR screen treats unassigned rows as
+    // the pool to hand out. The attribution itself is NOT preserved — the
+    // sheet keeps it, this database does not. (D-068)
     const convBy = O.get(r, 'Conversion By');
     const owner = salesId(convBy) ?? null;
-    if (!owner && !blank(convBy)) {
-      reject(SOURCE, rowNo, 'unknown_sales_owner', { raw: convBy }); continue;
-    }
-    if (!owner) bump('order_unassigned');
+    if (!owner) bump(blank(convBy) ? 'order_unassigned_blank' : `order_unassigned_${norm(convBy)}`);
 
-    const discount = money(O.get(r, 'Discount')) ?? 0;
-    if (discount > amount) { reject(SOURCE, rowNo, 'discount_exceeds_amount', { discount, amount }); continue; }
+    // The sheet's "Order Amount" is already what the customer was charged and
+    // its Discount column is recorded alongside as information — proved by the
+    // row with amount 499 and discount 500, impossible if the amount were
+    // gross. Storing the discount here would make lifetime_value
+    // (sum(amount - discount)) understate every customer. (D-067)
+    const discount = 0;
 
     const payKey = norm(O.get(r, 'Payment Mode'));
     const delivered = parseDate(O.get(r, 'Delivered Date')); // actual only — never the Estimated column (D-023)
     const stage = delivered ? 'delivered' : 'confirmed';
     const when = parseDate(O.get(r, 'Date of Order'));
+
+    // Re-running must not double the order book. Same key the duplicate
+    // cleanup uses: one customer, one date, one amount is one sale.
+    const dupKey = `${cust}|${when ?? ''}|${Number(amount).toFixed(2)}`;
+    if (existingOrders.has(dupKey)) { bump('skipped_already_imported'); continue; }
+    existingOrders.add(dupKey);
 
     const { rows } = await client.query(
       `insert into orders

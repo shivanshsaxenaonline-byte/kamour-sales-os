@@ -133,8 +133,14 @@ async function main() {
   // as a COUNT per key, not a flag: the same customer legitimately appears
   // twice on one day (a second attempt logged through the manual flow), and
   // a flag would silently drop the second call on every run.
+  // due_at is stored at 00:00 IST, which is 18:30 UTC the PREVIOUS day, and
+  // this database runs in UTC — so a plain `due_at::date` returns the day
+  // before the sheet's Selection Date and the key never matches. Casting
+  // through Asia/Kolkata is what makes a re-run idempotent; without it a
+  // second run silently doubles the entire call history.
   const already = new Map((await client.query(
-    `select customer_id || '|' || due_at::date as k, count(*)::int n
+    `select customer_id || '|' || (due_at at time zone 'Asia/Kolkata')::date as k,
+            count(*)::int n
        from followups where kind = 'order' group by 1`)).rows
     .map((r) => [r.k, r.n]));
 
