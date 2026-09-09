@@ -8,6 +8,7 @@
     "db:status": "node scripts/migrate.mjs status",
     "db:rollback": "node scripts/migrate.mjs down",
     "test:rls": "node scripts/test-rls.mjs",
+    "test:ai-leads": "node scripts/test-ai-leads.mjs",
     "db:backup": "node scripts/backup.mjs",
     "db:seed-team": "node scripts/seed-team.mjs",
     "import:sheets": "node scripts/import-sheets.mjs",

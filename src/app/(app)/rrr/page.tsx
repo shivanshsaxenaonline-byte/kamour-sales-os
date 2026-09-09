@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { RrrTable, type RrrRow, type Rep } from './rrr-table';
+import { RrrTable, type RrrRow, type AiLeadRow, type AiRun, type Rep } from './rrr-table';
 import type { ContactNumber } from './log-call-dialog';
 
 // The list is per-viewer (RLS decides which customers are visible) and changes
@@ -8,6 +8,13 @@ import type { ContactNumber } from './log-call-dialog';
 export const dynamic = 'force-dynamic';
 
 const CAN_ASSIGN = ['admin', 'ceo', 'coo', 'sales_manager', 'auditor'];
+
+/** Today on the sales floor, which is not today in UTC after 18:30. Mirrors
+ *  the database's own ist_today(); both must agree or the screen asks for a
+ *  list under a date the generator never wrote. */
+function istToday() {
+  return new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+}
 
 export default async function RrrPage() {
   const supabase = await createClient();
@@ -48,18 +55,33 @@ export default async function RrrPage() {
     if (!data || data.length < PAGE) break;
   }
 
-  const { data: numbers } = await supabase
-    .from('contact_numbers')
-    .select('id, label_en')
-    .eq('is_active', true)
-    .order('sort_order');
-
-  const { data: reps } = await supabase
-    .from('users')
-    .select('id, full_name, role')
-    .in('role', ['sales_exec', 'sales_manager'])
-    .eq('is_active', true)
-    .order('full_name');
+  // Today's AI list. Never more than the team's total daily cap (45 today), so
+  // it is one small request and needs no paging. A sales exec gets back only
+  // the fifteen dealt to them — RLS, not a filter here.
+  const today = istToday();
+  const [aiLeads, aiRun, numbers, reps] = await Promise.all([
+    supabase
+      .from('v_rrr_ai_leads')
+      .select(`run_on, rank, bucket, bucket_label, priority_score, reason, ai_owner_id, ai_owner_name, ${COLUMNS}`)
+      .eq('run_on', today)
+      .order('rank'),
+    supabase
+      .from('ai_lead_runs')
+      .select('run_on, generated_at, total')
+      .eq('run_on', today)
+      .maybeSingle(),
+    supabase
+      .from('contact_numbers')
+      .select('id, label_en')
+      .eq('is_active', true)
+      .order('sort_order'),
+    supabase
+      .from('users')
+      .select('id, full_name, role')
+      .in('role', ['sales_exec', 'sales_manager'])
+      .eq('is_active', true)
+      .order('full_name'),
+  ]);
 
   if (error) {
     return (
@@ -76,9 +98,13 @@ export default async function RrrPage() {
   return (
     <RrrTable
       rows={rows}
-      reps={(reps ?? []) as Rep[]}
+      // A failure here must not take down the main list, which is the screen's
+      // reason to exist; the AI tab then shows "not generated yet".
+      aiLeads={(aiLeads.data ?? []) as AiLeadRow[]}
+      aiRun={(aiRun.data ?? null) as AiRun | null}
+      reps={(reps.data ?? []) as Rep[]}
       canAssign={CAN_ASSIGN.includes(role)}
-      numbers={(numbers ?? []) as ContactNumber[]}
+      numbers={(numbers.data ?? []) as ContactNumber[]}
     />
   );
 }

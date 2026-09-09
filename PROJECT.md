@@ -165,6 +165,29 @@ vanished. Making them visible and followable is the product's main job.
 ### Segments (nightly cron, days past course end)
 A1 0–15 · A2 16–30 · B1 31–60 · B2 61–90 · C1 91–180 · C2 180+
 
+### AI daily leads (nightly cron, 04:30 IST)
+The RRR screen's second list: one day's call sheet, built by `fn_generate_ai_daily_leads`
+and dealt round-robin across the active salespeople. Not a hardcoded 45 — the day is the
+sum of `users.daily_lead_cap` (15 each today, three reps), so adding a rep widens the day
+on its own.
+
+| Bucket | Share | Who is in it |
+|---|---|---|
+| Overdue follow-up | 20% | A date already promised to the customer. Outranks everything. |
+| Website buyer | 15% | Last order came from Kamour.in / Kamour.shop — self-serve, no rep. |
+| Active buyer | 25% | Ordered within 90 days. |
+| Cooling off | 20% | 91–180 days. |
+| Dormant | 20% | 181+ days. |
+
+Shares live in `ai_lead_rules`, so changing the mix is an UPDATE. A bucket that runs short
+does not shrink the day: the remainder is filled by score from everyone still eligible.
+Never picked: DND, anyone contacted in the last 7 days, anyone on a list in the last 7 days,
+anyone who said no in the last 90. Score out of 100 = LTV (≤40) + repeat orders (≤20) +
+overdue promise (25) + reorder window (15), and the reason is written out in words on the row.
+
+**Today's list is who CALLS today, not who OWNS the customer.** Ownership still moves only
+through `fn_assign_rrr_customers`, and incentive credit still follows `original_owner_id`.
+
 Store `original_owner_id` **and** `current_owner_id`. RRR goes to the original salesperson
 first (existing relationship). Moves to pool only after 2 failed connect attempts.
 Incentive credit follows `original_owner_id`.
@@ -202,7 +225,8 @@ Live in a `products` table. Never hardcoded.
 RRR module · WATI Inbox · Manager Cockpit · absence redistribution · SLA timers · masked phones
 
 ### Phase 3
-AI draft-fill · voice note via Web Speech API · lead scoring · CEO analyst agent
+AI draft-fill · voice note via Web Speech API · ~~lead scoring~~ (landed early as the AI
+daily list, D-069) · CEO analyst agent
 
 ### Phase 4
 Doctor Console (structured Rx → auto cart + PDF + WhatsApp) · `ad_spend` ingestion for CAC

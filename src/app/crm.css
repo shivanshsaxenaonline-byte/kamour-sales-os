@@ -952,3 +952,23 @@
   padding: 8px 12px;
   border-top: 1px solid var(--border);
 }
+
+/* ---- RRR: the AI daily list ------------------------------------------- */
+/* Like .rrr-assignbar, a second toolbar row that borrows .grid-toolbar. It
+   states what today's list is and when it was built, so nobody has to guess
+   whether they are looking at a stale screen. */
+.rrr-aibar {
+  gap: 10px;
+  background: var(--accent-bg);
+}
+/* The reason text is a sentence, not a label: it needs room to wrap, and a
+   width or the table hands it the whole page. */
+.rrr-why {
+  max-width: 320px;
+}
+.rrr-why .muted {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.4;
+  white-space: normal;
+}
