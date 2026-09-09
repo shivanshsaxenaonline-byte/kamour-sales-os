@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState, useTransition } from 'react';
 import { assignRrr } from './actions';
 import { refreshAiLeads } from './ai-leads-actions';
@@ -122,16 +123,17 @@ const timeLabel = (iso: string) =>
     { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
 export function RrrTable({
-  rows, aiLeads, aiRun, reps, canAssign, numbers,
+  mode, rows, aiLeads, counts, aiRun, reps, canAssign, numbers,
 }: {
+  mode: 'all' | 'ai';
   rows: RrrRow[];
   aiLeads: AiLeadRow[];
+  counts: { all: number; ai: number };
   aiRun: AiRun | null;
   reps: Rep[];
   canAssign: boolean;
   numbers: ContactNumber[];
 }) {
-  const [list, setList] = useState<'all' | 'ai'>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [owner, setOwner] = useState('all');
   const [stage, setStage] = useState('all');
@@ -145,7 +147,9 @@ export function RrrTable({
   const [calling, setCalling] = useState<CallTarget | null>(null);
   const [page, setPage] = useState(1);
 
-  const isAi = list === 'ai';
+  // Which list you are on is now the URL, not component state, so the sidebar
+  // can link straight to it and the browser's own back button works.
+  const isAi = mode === 'ai';
 
   // The buckets actually present in today's list, labelled by the database.
   // Built from the rows rather than hard-coded so a new rule shows up on its
@@ -190,18 +194,6 @@ export function RrrTable({
   // "Select all" means every row the filter matched, not just this page —
   // otherwise assigning 300 customers would take six clicks through pages.
   const allShown = visible.length > 0 && visible.every((r) => selected.has(r.customer_id));
-
-  function switchList(next: 'all' | 'ai') {
-    setList(next);
-    // The two lists do not share a filter vocabulary, and a selection carried
-    // across them would assign rows the user can no longer see.
-    setSelected(new Set());
-    setOwner('all');
-    setStage('all');
-    setBucket('all');
-    setPage(1);
-    setMessage(null);
-  }
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -267,25 +259,17 @@ export function RrrTable({
             The counts are the other half of the fix: a tab reading 0 says the
             list has not been generated, where an unopened dropdown said
             nothing at all. */}
-        <div className="module-tabs" role="tablist" aria-label="RRR views">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!isAi}
-            className={isAi ? '' : 'active'}
-            onClick={() => switchList('all')}
-          >
-            All customers<span>{rows.length.toLocaleString('en-IN')}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={isAi}
-            className={isAi ? 'active' : ''}
-            onClick={() => switchList('ai')}
-          >
-            AI Leads · today<span>{aiLeads.length.toLocaleString('en-IN')}</span>
-          </button>
+        {/* Links, not buttons: each list is its own URL, so these are the same
+            navigation the sidebar performs and behave like it — bookmarkable,
+            back-button-able, and highlighted by the route rather than by
+            state the sidebar cannot see. */}
+        <div className="module-tabs">
+          <Link href="/rrr" className={isAi ? '' : 'active'} aria-current={isAi ? undefined : 'page'}>
+            All customers<span>{counts.all.toLocaleString('en-IN')}</span>
+          </Link>
+          <Link href="/rrr/ai" className={isAi ? 'active' : ''} aria-current={isAi ? 'page' : undefined}>
+            AI Leads · today<span>{counts.ai.toLocaleString('en-IN')}</span>
+          </Link>
         </div>
 
         <span className="muted">

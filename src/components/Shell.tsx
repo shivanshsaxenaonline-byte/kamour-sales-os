@@ -12,6 +12,9 @@ const NAV: {
   label: string;
   icon: IconName;
   roles: UserRole[];
+  // A section with more than one list underneath it. The parent still links to
+  // its own default list, so clicking "RRR" never lands nowhere.
+  children?: { href: string; label: string }[];
 }[] = [
   {
     href: "/today",
@@ -62,6 +65,10 @@ const NAV: {
     label: "RRR",
     icon: "orders",
     roles: ["sales_exec", "sales_manager", "auditor", "coo", "admin", "ceo"],
+    children: [
+      { href: "/rrr", label: "All customers" },
+      { href: "/rrr/ai", label: "AI Leads · today" },
+    ],
   },
 ];
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -89,6 +96,10 @@ export function Shell({
   const pathname = usePathname(),
     router = useRouter();
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  // Only what the user has explicitly opened or closed. Anything absent falls
+  // back to "open if you are inside that section", so arriving on /rrr/ai
+  // shows the section already open without a click.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [command, setCommand] = useState("");
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
@@ -163,19 +174,62 @@ export function Shell({
           </Link>
           <div className="nav-caption">WORKSPACE</div>
           <nav aria-label="Main navigation">
-            {items.map((item) => (
-              <Link
-                key={item.href}
-                className={
-                  "nav-link " + (pathname === item.href ? "active" : "")
-                }
-                href={item.href}
-                aria-current={pathname === item.href ? "page" : undefined}
-              >
-                <Icon name={item.icon} />
-                {item.label}
-              </Link>
-            ))}
+            {items.map((item) => {
+              const inSection =
+                pathname === item.href || pathname.startsWith(item.href + "/");
+              const open = item.children ? (expanded[item.href] ?? inSection) : false;
+              return (
+                <div key={item.href}>
+                  <div className="nav-row">
+                    <Link
+                      className={
+                        // A parent with children is highlighted by its own
+                        // child, not by itself: two things lit at once reads
+                        // as being in two places.
+                        "nav-link " +
+                        (pathname === item.href && !item.children ? "active" : "") +
+                        (item.children && inSection ? " in-section" : "")
+                      }
+                      href={item.href}
+                      aria-current={pathname === item.href ? "page" : undefined}
+                    >
+                      <Icon name={item.icon} />
+                      {item.label}
+                    </Link>
+                    {item.children ? (
+                      <button
+                        type="button"
+                        className={"nav-toggle " + (open ? "open" : "")}
+                        aria-expanded={open}
+                        aria-label={`${open ? "Collapse" : "Expand"} ${item.label}`}
+                        onClick={() =>
+                          setExpanded((prev) => ({ ...prev, [item.href]: !open }))
+                        }
+                      >
+                        <Icon name="chevron" />
+                      </button>
+                    ) : null}
+                  </div>
+                  {item.children && open ? (
+                    <div className="nav-sub">
+                      {item.children.map((child) => (
+                        <Link
+                          key={child.href}
+                          className={
+                            "nav-sublink " +
+                            (pathname === child.href ? "active" : "")
+                          }
+                          href={child.href}
+                          aria-current={pathname === child.href ? "page" : undefined}
+                        >
+                          {child.label}
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </nav>
           <div className="sidebar-foot">
             <button className="sidebar-command" onClick={openPalette}>
