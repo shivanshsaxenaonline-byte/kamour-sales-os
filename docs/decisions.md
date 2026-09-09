@@ -515,3 +515,55 @@ revisitable tradeoff.
 **Still required to go live:** `KAMOUR_ID_PICKER=1` and `SEED_TEMP_PASSWORD` must be set as
 server-side env vars in the Vercel project (never `NEXT_PUBLIC_*`) — no Vercel dashboard/API
 access here, so the user needs to set these in Vercel's project settings and redeploy.
+
+### D-062 · 2026-09-09 · KM002 sheets imported; incomplete rows kept, not dropped
+User: "i want that all data in supabase to be stored as a place." Imported the KM002 Google Sheet
+(the source behind the separate RRR Intelligence Dashboard) into the same `customers`/`orders`/
+`order_items` tables, via `scripts/import-km002.mjs` (dry-run by default, `--tab=master|shop`).
+Two source gaps turned out to cover most rows, and the first-pass importer rejected them the way
+`import-sheets.mjs` rejects unreadable data (D-011):
+**994 orders have no per-product columns** — those columns appear not to have existed in the sheet
+before ~Oct 2025 — and **977 have no Course Duration**, almost always the same rows. Rejecting
+both would have thrown away ~half the company's order history over columns the source never had.
+User chose to keep them ("import without line items"), so migration **022** lets `is_legacy` rows
+carry a NULL `course_duration_days` (same escape hatch 015 gave `dispatch_date`), and those orders
+import with real customer/amount/date and simply no `order_items`. Consequence, stated plainly:
+the RRR clock cannot schedule a repeat call for an order with no course length — it schedules
+nothing rather than inventing a course length to schedule against.
+Final: 1,835 + 156 orders in, 180 rejected with reasons in `import_rejects` (131 blank/broken
+phone, 32 "Doctor" as the closer with no such user, 7 blank rows, 2 discount > amount).
+
+### D-063 · 2026-09-09 · Order source recorded on the order; website orders stay unassigned
+User: "ye orders bhi master ki tarah RRR me ayenge but usme likha hoga kamour.in or kamour.shop."
+`customers.first_source_id` only answers where a CUSTOMER first came from, so it cannot say whether
+a given order was a rep's conversion or a self-serve website checkout — and a repeat customer
+genuinely has both. Migration **023** adds `orders.source_id`, plus `cga` / `kamour_in` /
+`kamour_shop` lead sources. This also rescued the Master tab's own Source column (CGA 1,809 rows,
+Flipkart, IndiaMART, Justdial), which the first import had been dropping entirely.
+All 164 Kamour.in/Kamour.shop rows have **"Conversion By" blank** — correctly, nobody converted a
+website checkout. Rather than invent a "Website" user and put 156 orders of incentive credit on
+someone who never made a call, 023 makes `original_owner_id`/`current_owner_id` nullable for
+`is_legacy` rows only. NULL owner already means "unassigned" everywhere else in this schema
+(`leads.owner_id` is nullable; D-020 masks phones for exactly these rows), and these 156 unassigned
+orders are the natural pool for the RRR assign feature the user asked for. Non-legacy orders keep
+the old guarantee via `orders_live_needs_owner`.
+
+### D-064 · 2026-09-09 · The team's real call log imported; `order_placed` added as an outcome
+Imported the "AI Daily Queue" tab — 1,769 logged follow-up attempts on 819 customers over 44 days
+(24 Jul – 8 Sep 2026) — into `followups` as `kind='order'` rows parented on the customer's own
+order (`followups_one_parent` requires exactly one parent, and these are retention calls on people
+who already bought). `scripts/import-ai-queue.mjs`; re-runnable, deduped on the queue's own natural
+key (Selection Date + Customer Key) held as a COUNT so a legitimate second same-day call is kept.
+**Migration 024 extends `followups.outcome`.** The sheet's dropdown has nine values; the schema had
+six, and `Order Placed` (182 rows) had no home. Folding it into `will_buy` would have merged "he
+says he'll buy" with "he bought" — destroying the single number the whole RRR programme is measured
+on — so `order_placed`, `medicine_not_finished` and `will_update_later` were added. The mapped
+outcome is a summary only: every row also keeps the operator's exact words in `remark`.
+**Two source defects found and reported, not silently absorbed:** 84 rows written on 2026-08-03 by
+an older version of the Apps Script have their fields in the wrong columns, and 8 of those carry a
+Source Row number (1699–1744) where the attempt count belongs — numeric, so a naive check passed
+them and they reached the database as `attempt_no = 1734` before being caught and removed. Both are
+rejected as `column_shifted_source_row` now.
+Final: 1,572 follow-ups, 197 rejected. Result visible immediately: conversion by rep runs
+Ashutosh 17.3% / Shreyansh 7.2% / Tejasv 4.7%, and **53% of all calls are never picked up** —
+the largest operational finding in the data.
