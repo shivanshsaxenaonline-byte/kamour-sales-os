@@ -594,3 +594,34 @@ their own dashboard (orders + recency, same A1..C2 labels). Two definitions of o
 a wart, recorded here rather than resolved by quietly redefining PROJECT.md's column. (b) Only
 2 of 11 sales_exec accounts and 0 of 5 doctors are active, so the assign dropdown offers exactly
 Ashutosh, Tejasv and Shreyansh — which matches the three reps hardcoded in the team's Apps Script.
+
+### D-066 · 2026-09-09 · Logging a call — the gap that was keeping the sheet alive
+User: "ab mujhe pehle wale dashboard pe zyada kaam nahi karna, ye new system hum bana rahe hain
+ispe hi kaam karna hai." Checking what that actually requires turned up the blocker: the app could
+edit a follow-up's free-text `remark` and **nothing else** — no outcome, no completion, no next
+date. The single action the floor performs dozens of times a day (their form: outcome, who
+attended, which business number, note, next date) did not exist here at all. Until it did, the
+team could not stop using the Sheet no matter what else was built.
+Migration **026** adds `contact_numbers` (the four numbers from their own `FOLLOW_UP_NUMBERS`, as a
+lookup like every other fixed list, not free text) plus `followups.contact_number_id`, and widens
+`v_rrr_queue` with `open_followup_id` / `last_order_id`. `outcome`, `completed_at`, `next_due_at`
+already existed (005, 024).
+**Works both ways round, because the floor does:** against a scheduled follow-up, or against a
+customer a rep just decided to ring — 618 of the 1,769 rows in their own log are that second kind
+("manual_follow_up"), so a call with nothing scheduled creates its own record, parented on the
+customer's last order.
+**No SECURITY DEFINER.** `followups_write` already grants a user their own rows, so RLS is the
+check and a caller without permission updates zero rows — reported, never swallowed as success.
+`scripts/test-log-call.mjs` proves it: a rep can log their own call and schedule the next; another
+rep cannot log or even see it; **the auditor cannot log a call at all** — D-065's assignment hole
+stayed exactly one hole; and outcomes outside the allowed list and parentless follow-ups are both
+refused. 8/8, alongside 15/15 RRR-assign and 27/27 RLS.
+**`/rrr` opened to sales_exec too.** It was oversight-only, but the people who make the calls are
+sales execs — they could not reach the screen. RLS already limits them to their own customers, and
+the assign controls are a separate permission checked in the database, so widening the nav costs
+nothing and gives each rep their own repeat list.
+**Still missing before the Sheet can actually be switched off:** the same log-call action is not
+yet wired into Today (`ModuleGrid`), which is where reps start their day; nothing syncs the Sheet
+after this one-time import, so a cutover date is needed rather than parallel running; and the
+Apps Script column-shift bug from 2026-08-03 is still unfixed in the live script — irrelevant if
+the Sheet is retired, corrupting if it is not.

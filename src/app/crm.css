@@ -770,3 +770,73 @@
 .rrr-table input[type="checkbox"] {
   cursor: pointer;
 }
+
+/* ---- RRR: log a call -------------------------------------------------- */
+/* .crm-dialog is styled for a real <dialog> (it has a ::backdrop). This one
+   is a plain element, so it brings its own overlay and centring. */
+.rrr-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 28%);
+  border: 0;
+  border-radius: 0;
+}
+.rrr-dialog-body {
+  width: 100%;
+  max-width: 440px;
+  max-height: 88vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-str);
+  border-radius: 6px;
+}
+.rrr-dialog-body label {
+  margin-top: 8px;
+  font-weight: 600;
+}
+.rrr-outcomes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 0;
+  border: 0;
+}
+.rrr-outcomes legend {
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.rrr-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.rrr-outcome:hover {
+  background: var(--hover);
+}
+.rrr-outcome.chosen {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.rrr-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

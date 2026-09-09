@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { RrrTable, type RrrRow, type Rep } from './rrr-table';
+import type { ContactNumber } from './log-call-dialog';
 
 // The list is per-viewer (RLS decides which customers are visible) and changes
 // as soon as anyone assigns, so it is never a build-time snapshot.
@@ -24,10 +25,16 @@ export default async function RrrPage() {
   // that grows; filtering is the next thing to build here if it does.
   const { data: rows, error } = await supabase
     .from('v_rrr_queue')
-    .select('customer_id, full_name, phone_e164, rfm_segment, lifetime_orders, lifetime_value, last_order_on, days_since_order, current_owner_id, owner_name, attempts, last_contacted_on, last_outcome, next_due_on, last_order_source, is_dnd')
+    .select('customer_id, full_name, phone_e164, rfm_segment, lifetime_orders, lifetime_value, last_order_on, days_since_order, current_owner_id, owner_name, attempts, last_contacted_on, last_outcome, next_due_on, last_order_source, is_dnd, open_followup_id, last_order_id')
     .order('current_owner_id', { ascending: true, nullsFirst: true })
     .order('lifetime_value', { ascending: false })
     .limit(500);
+
+  const { data: numbers } = await supabase
+    .from('contact_numbers')
+    .select('id, label_en')
+    .eq('is_active', true)
+    .order('sort_order');
 
   const { data: reps } = await supabase
     .from('users')
@@ -53,6 +60,7 @@ export default async function RrrPage() {
       rows={(rows ?? []) as RrrRow[]}
       reps={(reps ?? []) as Rep[]}
       canAssign={CAN_ASSIGN.includes(role)}
+      numbers={(numbers ?? []) as ContactNumber[]}
     />
   );
 }

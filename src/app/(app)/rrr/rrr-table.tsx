@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { assignRrr } from './actions';
+import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
 
 export type RrrRow = {
   customer_id: string;
@@ -20,6 +21,8 @@ export type RrrRow = {
   next_due_on: string | null;
   last_order_source: string | null;
   is_dnd: boolean;
+  open_followup_id: string | null;
+  last_order_id: string | null;
 };
 
 export type Rep = { id: string; full_name: string; role: string };
@@ -54,8 +57,9 @@ const label = (s: string | null) =>
   s ? s.replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase()) : '—';
 
 export function RrrTable({
-  rows, reps, canAssign,
-}: { rows: RrrRow[]; reps: Rep[]; canAssign: boolean }) {
+  rows, reps, canAssign, numbers,
+}: { rows: RrrRow[]; reps: Rep[]; canAssign: boolean; numbers: ContactNumber[] }) {
+  const [calling, setCalling] = useState<CallTarget | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [segment, setSegment] = useState('all');
   const [owner, setOwner] = useState('all');
@@ -187,6 +191,7 @@ export function RrrTable({
               <th className="num">Tries</th>
               <th>Owner</th>
               <th>Source</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -239,6 +244,20 @@ export function RrrTable({
                   {r.owner_name ?? <span className="status-pill dashed">Unassigned</span>}
                 </td>
                 <td className="muted">{r.last_order_source ?? '—'}</td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={() => setCalling({
+                      customerId: r.customer_id,
+                      name: r.full_name,
+                      phone: r.phone_e164,
+                      followupId: r.open_followup_id,
+                      orderId: r.last_order_id,
+                    })}
+                  >
+                    Log call
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -250,6 +269,15 @@ export function RrrTable({
           </div>
         ) : null}
       </div>
+
+      {calling ? (
+        <LogCallDialog
+          target={calling}
+          numbers={numbers}
+          onClose={() => setCalling(null)}
+          onSaved={(msg) => { setCalling(null); setMessage(msg); }}
+        />
+      ) : null}
     </section>
   );
 }

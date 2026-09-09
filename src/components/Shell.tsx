@@ -54,12 +54,14 @@ const NAV: {
     ],
   },
   {
-    // Oversight roles only. A sales exec works their own queue on Today;
-    // this screen is for deciding who works which repeat customer.
+    // Everyone who works repeat business. RLS decides what each one sees:
+    // an oversight role gets the whole base to hand out, a sales exec gets
+    // only their own customers to call. The assign controls are a separate
+    // permission on top, checked in the database, not just hidden here.
     href: "/rrr",
     label: "RRR",
     icon: "orders",
-    roles: ["auditor", "coo", "admin", "ceo", "sales_manager"],
+    roles: ["sales_exec", "sales_manager", "auditor", "coo", "admin", "ceo"],
   },
 ];
 const ROLE_LABEL: Record<UserRole, string> = {
