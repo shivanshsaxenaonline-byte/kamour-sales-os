@@ -53,6 +53,14 @@ const NAV: {
       "auditor",
     ],
   },
+  {
+    // Oversight roles only. A sales exec works their own queue on Today;
+    // this screen is for deciding who works which repeat customer.
+    href: "/rrr",
+    label: "RRR",
+    icon: "orders",
+    roles: ["auditor", "coo", "admin", "ceo", "sales_manager"],
+  },
 ];
 const ROLE_LABEL: Record<UserRole, string> = {
   sales_exec: "Sales executive",

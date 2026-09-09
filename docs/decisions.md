@@ -567,3 +567,30 @@ rejected as `column_shifted_source_row` now.
 Final: 1,572 follow-ups, 197 rejected. Result visible immediately: conversion by rep runs
 Ashutosh 17.3% / Shreyansh 7.2% / Tejasv 4.7%, and **53% of all calls are never picked up** —
 the largest operational finding in the data.
+
+### D-065 · 2026-09-09 · RRR tab, and the auditor's one narrow write
+User: "here must be a tab of rrr like in alka and coo and shivansh they can see all rrr list and
+after that according to data they can tick and send the leads to sales person or assign them."
+Migration **025** adds `v_rrr_queue` (security_invoker, so each viewer sees only what their own RLS
+allows) and `fn_assign_rrr_customers(uuid[], uuid)`. New route `/rrr`, in the nav for
+auditor/coo/admin/ceo/sales_manager only — a sales exec works their own queue on Today; this screen
+is for deciding who works which repeat customer.
+**The auditor conflict, resolved deliberately.** Alka is an `auditor`: read-everything,
+write-nothing (D-012/013), whose own migration comment said giving that role write access "would
+make the audit trail lie about who looked at what". The user was shown this conflict and chose to
+let her assign anyway. Rather than widen the auditor's write surface across every table, this is a
+single narrow hole: one SECURITY DEFINER function, one field, permission re-checked in the body,
+and the existing customers audit trigger records who did it (`auth.uid()` still resolves to the
+real caller inside a definer function). Alka still cannot touch an amount, an outcome or a stage.
+`scripts/test-rrr-assign.mjs` proves it against real impersonated JWTs, the way PostgREST connects:
+15 assertions covering who may assign, who is refused, what may be assigned to whom, and the side
+effects — 15/15, plus the existing 27 RLS tests still green.
+**Assignment moves open follow-ups too**, or the new owner inherits a queue they cannot see.
+Completed follow-ups keep their original owner: who made a call in the past is history, not state.
+**Two things the data forced.** (a) `customers.segment` is NULL for the entire imported base —
+it is measured from `course_ends_at`, which needs a dispatch date no legacy order has (D-062) — so
+the view computes `rfm_segment` alongside it, using the ladder the team already reads daily on
+their own dashboard (orders + recency, same A1..C2 labels). Two definitions of one set of codes is
+a wart, recorded here rather than resolved by quietly redefining PROJECT.md's column. (b) Only
+2 of 11 sales_exec accounts and 0 of 5 doctors are active, so the assign dropdown offers exactly
+Ashutosh, Tejasv and Shreyansh — which matches the three reps hardcoded in the team's Apps Script.

@@ -750,3 +750,23 @@
     width: 146px;
   }
 }
+
+/* ---- RRR tab ---------------------------------------------------------- */
+/* The assign bar is a second toolbar row, so it borrows .grid-toolbar and
+   only overrides what differs: it is an action strip, not a header. */
+.rrr-assignbar {
+  background: var(--accent-bg);
+  gap: 10px;
+}
+.rrr-table td {
+  vertical-align: top;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.rrr-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rrr-table input[type="checkbox"] {
+  cursor: pointer;
+}
