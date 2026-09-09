@@ -48,6 +48,10 @@ const OUTCOME_TONE: Record<string, string> = {
   not_interested: 'critical', wrong_number: 'critical',
 };
 
+// 1,300 rows in one <table> is a slow, unscrollable page. Fifty at a time,
+// the same size the team's existing workspace uses.
+const PAGE_SIZE = 50;
+
 const money = (n: number | null) =>
   n == null ? '—' : '₹' + Math.round(n).toLocaleString('en-IN');
 
@@ -92,6 +96,7 @@ export function RrrTable({
   const [pending, startTransition] = useTransition();
   const [openRow, setOpenRow] = useState<RrrRow | null>(null);
   const [calling, setCalling] = useState<CallTarget | null>(null);
+  const [page, setPage] = useState(1);
 
   const visible = useMemo(() => rows.filter((r) => {
     if (owner === 'unassigned' && r.current_owner_id) return false;
@@ -106,6 +111,14 @@ export function RrrTable({
     return true;
   }), [rows, owner, stage, search]);
 
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  // A filter change can leave you past the end; clamp rather than showing a
+  // blank page that looks like "no results".
+  const current = Math.min(page, pageCount);
+  const shown = visible.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+
+  // "Select all" means every row the filter matched, not just this page —
+  // otherwise assigning 300 customers would take six clicks through pages.
   const allShown = visible.length > 0 && visible.every((r) => selected.has(r.customer_id));
 
   function toggle(id: string) {
@@ -154,7 +167,9 @@ export function RrrTable({
       <div className="grid-toolbar">
         <h1>RRR</h1>
         <span className="muted">
-          {visible.length.toLocaleString('en-IN')} customers
+          {visible.length
+            ? `Showing ${(current - 1) * PAGE_SIZE + 1}–${Math.min(current * PAGE_SIZE, visible.length)} of ${visible.length.toLocaleString('en-IN')}`
+            : '0 customers'}
           {selected.size ? ` · ${selected.size} selected` : ''}
         </span>
 
@@ -166,12 +181,12 @@ export function RrrTable({
             type="search"
             value={search}
             placeholder="Name or mobile number…"
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
         </label>
 
         <label className="sr-only" htmlFor="rrr-stage">Stage</label>
-        <select id="rrr-stage" value={stage} onChange={(e) => setStage(e.target.value)}>
+        <select id="rrr-stage" value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
           <option value="all">All customers</option>
           <option value="untouched">Untouched — never called</option>
           <option value="overdue">Overdue follow-up</option>
@@ -179,7 +194,7 @@ export function RrrTable({
         </select>
 
         <label className="sr-only" htmlFor="rrr-owner">Owner</label>
-        <select id="rrr-owner" value={owner} onChange={(e) => setOwner(e.target.value)}>
+        <select id="rrr-owner" value={owner} onChange={(e) => { setOwner(e.target.value); setPage(1); }}>
           <option value="all">Everyone</option>
           <option value="unassigned">Unassigned only</option>
           {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
@@ -222,7 +237,7 @@ export function RrrTable({
             </tr>
           </thead>
           <tbody>
-            {visible.map((r) => {
+            {shown.map((r) => {
               const act = activity(r.days_since_order);
               const fu = followUpState(r);
               return (
@@ -283,6 +298,18 @@ export function RrrTable({
           <div className="grid-empty"><p>No customers match this filter.</p></div>
         ) : null}
       </div>
+
+      {pageCount > 1 ? (
+        <footer className="grid-footer rrr-pager">
+          <button type="button" onClick={() => setPage(current - 1)} disabled={current <= 1}>
+            Previous
+          </button>
+          <span className="muted">Page {current} of {pageCount}</span>
+          <button type="button" onClick={() => setPage(current + 1)} disabled={current >= pageCount}>
+            Next
+          </button>
+        </footer>
+      ) : null}
 
       {openRow ? (
         <CustomerPanel

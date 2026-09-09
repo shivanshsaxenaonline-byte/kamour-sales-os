@@ -19,16 +19,34 @@ export default async function RrrPage() {
     .from('users').select('role').eq('id', user.id).single();
   const role = me?.role ?? '';
 
-  // Ordering: unassigned first (that is the work this screen exists to hand
-  // out), then by what the customer is worth. Capped — the whole base is
-  // 1,300 rows today but this screen must not become a full-table scroll if
-  // that grows; filtering is the next thing to build here if it does.
-  const { data: rows, error } = await supabase
-    .from('v_rrr_queue')
-    .select('customer_id, full_name, phone_e164, lifetime_orders, lifetime_value, aov, is_repeat_buyer, last_order_on, days_since_order, payment_profile, current_owner_id, owner_name, is_dnd, attempts, last_contacted_on, last_outcome, next_due_on, open_followup_id, last_order_id, last_order_source')
-    .order('current_owner_id', { ascending: true, nullsFirst: true })
-    .order('lifetime_value', { ascending: false })
-    .limit(500);
+  // The whole base, not a slice: this screen exists to look across everyone
+  // and decide, so a cap would quietly hide customers from the person whose
+  // job is to see them all. PostgREST returns at most 1,000 rows per request,
+  // so it is read in pages and stitched. ~1,300 rows today; the loop has a
+  // hard ceiling so a future data explosion degrades instead of hanging.
+  const COLUMNS = 'customer_id, full_name, phone_e164, lifetime_orders, lifetime_value, aov, is_repeat_buyer, last_order_on, days_since_order, payment_profile, current_owner_id, owner_name, is_dnd, attempts, last_contacted_on, last_outcome, next_due_on, open_followup_id, last_order_id, last_order_source';
+  const PAGE = 1000;
+  const MAX_PAGES = 20;
+
+  const rows: RrrRow[] = [];
+  let error: { message: string } | null = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error: pageError } = await supabase
+      .from('v_rrr_queue')
+      .select(COLUMNS)
+      // Unassigned first — that is the work this screen hands out — then by
+      // what the customer is worth. customer_id breaks ties so paging is
+      // stable; without it two rows with equal value can swap between pages
+      // and one gets fetched twice while another is never fetched at all.
+      .order('current_owner_id', { ascending: true, nullsFirst: true })
+      .order('lifetime_value', { ascending: false })
+      .order('customer_id', { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+
+    if (pageError) { error = pageError; break; }
+    rows.push(...((data ?? []) as RrrRow[]));
+    if (!data || data.length < PAGE) break;
+  }
 
   const { data: numbers } = await supabase
     .from('contact_numbers')
@@ -57,7 +75,7 @@ export default async function RrrPage() {
 
   return (
     <RrrTable
-      rows={(rows ?? []) as RrrRow[]}
+      rows={rows}
       reps={(reps ?? []) as Rep[]}
       canAssign={CAN_ASSIGN.includes(role)}
       numbers={(numbers ?? []) as ContactNumber[]}
