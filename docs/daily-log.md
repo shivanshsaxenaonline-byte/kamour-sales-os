@@ -171,3 +171,19 @@ PROJECT.md explicitly bans Vercel (Hobby ToS + commercial use). Scanned all 8 pu
 bundles for secrets - only the anon key present, nothing else. Auth gating verified live.
 Nothing leaked, but login is now internet-reachable with the shared temp password still
 unrotated. Recommended: rotate password now, decide Vercel-vs-Cloudflare-Pages with user.
+
+## 2026-09-09 · AI daily leads on the RRR screen
+
+Second list on the RRR tab, chosen from a dropdown: today's 45, dealt 15/15/15, rebuilt by cron
+at 04:30 IST. Migration 028 (D-069).
+
+- The day's size is `sum(users.daily_lead_cap)`, the mix is `ai_lead_rules.share_pct` — both data,
+  so neither "45" nor "15" nor "how much Kamour" is a deploy.
+- Mix sized against the real base: overdue 20 / Kamour 15 / active 25 / cooling 20 / dormant 20.
+  Simulated 20 consecutive days: 45 every day, minimum 7-day gap before anyone reappears.
+- Each row carries a score out of 100 and the reason in words, the way the team's own sheet does.
+- Today's list says who calls today; ownership still moves only through fn_assign_rrr_customers.
+- One narrow RLS widening so a rep can open the fifteen they were dealt, gated to sales_exec and
+  to today's run. scripts/test-ai-leads.mjs proves it is exactly that wide (26/26).
+- Fixed in passing: the status message after logging a call was rendered inside the assign bar,
+  which reps cannot see, so a rep got no confirmation.

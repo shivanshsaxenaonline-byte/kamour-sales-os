@@ -917,20 +917,87 @@
   align-items: center;
   margin-bottom: 10px;
 }
+/* A real timeline: one rail down the left, a dot per call, and the silence
+   between calls drawn rather than left to be worked out from two dates. The
+   rail is what turns a stack of cards into a story — "rang, rang, nothing for
+   three months, rang" is the shape a rep needs to see at a glance. */
 .rrr-timeline {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 320px;
+  gap: 8px;
+  max-height: 340px;
   overflow: auto;
   margin: 0;
-  padding: 0 0 0 2px;
+  padding: 4px 0 4px 22px;
   list-style: none;
 }
-.rrr-timeline li {
+/* The rail sits behind everything and runs the full height of the list. It is
+   inset top and bottom so it starts and ends at the first and last dot rather
+   than floating past them. */
+.rrr-timeline::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--border);
+}
+.rrr-tl-item {
+  position: relative;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 5px;
+  background: var(--surface);
+}
+/* The dot. The ring is painted in the panel's own background so the rail is
+   punched through cleanly instead of running under the dot. */
+.rrr-tl-item::before {
+  content: "";
+  position: absolute;
+  left: -20px;
+  top: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border-str);
+  box-shadow: 0 0 0 3px var(--surface);
+}
+.rrr-tl-item[data-tone="positive"]::before { background: var(--paid); }
+.rrr-tl-item[data-tone="attention"]::before { background: var(--pend); }
+.rrr-tl-item[data-tone="critical"]::before { background: var(--stop); }
+/* Still to happen, so it is drawn as an outline: the future is not history. */
+.rrr-tl-item[data-state="pending"] {
+  border-style: dashed;
+}
+.rrr-tl-item[data-state="pending"]::before {
+  background: var(--surface);
+  border: 2px solid var(--border-str);
+  width: 7px;
+  height: 7px;
+}
+/* The gap between two calls, sitting ON the rail with the panel background
+   behind it so it cuts the line — the visual break IS the point. */
+.rrr-tl-gap {
+  position: relative;
+  margin: -2px 0 -2px -18px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.rrr-tl-gap span {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+/* A silence long enough that the customer had time to go cold. */
+.rrr-tl-gap[data-long="true"] span {
+  color: var(--pend);
+  border-color: var(--pend);
+  background: var(--pend-bg);
 }
 .rrr-timeline-head {
   display: flex;

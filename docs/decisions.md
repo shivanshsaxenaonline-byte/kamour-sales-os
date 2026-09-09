@@ -681,3 +681,96 @@ the 1,525 copies, keeping the earliest of each identical row so genuine same-day
 survive. Verified by running the importer again: 1,575 skipped, nothing duplicated.
 **Where it landed:** 2,021 orders (2,171 sheet rows − 146 unimportable − 4 duplicates within the
 sheets themselves), 1,336 RRR customers, 1,575 logged calls, 184 unassigned orders.
+
+### D-069 · 2026-09-09 · AI daily leads: 45 a day, dealt 15/15/15, mixed by rule
+User: "RRR wale section me ek dropdown aana chahiye ki AI Leads hai, aur total 45 daily AI leads
+aani chahiye, then 15-15-15 teeno ko assign honi chahiye, aur ye leads daily refresh honi chahiye.
+Ye daily 45 leads kuch na kuch basis pe aani chahiye — like itna percent Kamour, itna percent
+active, itna percent inactive." Migration **028**. The team already ran this by hand in the KM002
+sheet's "AI Daily Queue" tab — dated selection, rank, segment, priority score, reason, seven-day
+cooldown — so this moves that process into the database and keeps its vocabulary rather than
+inventing a second one.
+
+**Nothing about "45" or "15" is a constant.** The day is the sum of `users.daily_lead_cap` over
+active salespeople (15 each, three of them), a column that has existed since 002 and whose name
+already meant exactly this. A fourth rep joining makes the day 60 with no deploy. The mix lives in
+`ai_lead_rules.share_pct`, so "more Kamour" is an UPDATE. The bucket *definitions* stay in the
+function, because a predicate stored as a data row means dynamic SQL — same line `course_plans`
+draws (D-004): changing a share is data, inventing a new KIND of bucket is a migration.
+
+**The mix, sized against the real base** (1,336 RRR customers: 212 active, 181 cooling, 285
+dormant, 658 lost, 88 website buyers, 66 overdue) so no bucket is asked for more people than it can
+supply across a seven-day cooldown: overdue 20%, Kamour 15%, active 25%, cooling 20%, dormant 20%.
+Shares use `floor()` and a top-up pass fills the rest by score, so a bucket that runs dry never
+silently shrinks the day — verified by simulating 20 consecutive days: 45 every day, three reps
+every day, and the minimum gap before a customer reappears is exactly 7.
+
+**Today's list is who CALLS today, not who OWNS the customer.** Forty-five ownership changes a day
+would churn the base and rewrite incentive attribution, which follows `original_owner_id` forever.
+Permanent assignment stays with `fn_assign_rrr_customers` (D-065), and the assign bar on the AI
+list says so out loud.
+
+**The one RLS widening, and its exact size.** A rep must see the fifteen they were dealt, but
+`customers_read` says a sales exec sees only customers they own and most of the 45 are unowned or
+owned by someone else. `app_ai_lead_today(cid)` adds one clause to `customers_read`, `orders_read`
+and `followups_read`: TODAY's list, dealt to the caller. It is gated on `app_role() = 'sales_exec'`
+so the per-row probe stays off the hot path for every other role (D-049's lesson), and it expires
+by itself when tomorrow's list is generated — no cleanup job. `scripts/test-ai-leads.mjs` proves
+the size of the hole in both directions: the exec sees all 15 of theirs and their order history,
+and sees neither a lead dealt to another rep nor a customer on no list at all, and the widened
+read did not become a widened write. A visible consequence, intended rather than a surprise: a
+rep's "All customers" list grows by their fifteen for the day (Tejasv: 92 → 107).
+
+**Cron at 23:00 UTC, not 20:00 like `refresh-segments`.** 20:00 UTC is 01:30 IST, which is still
+the previous day in UTC, so `ist_today()` would write the list under yesterday's date and the floor
+would arrive to an empty screen. `ist_today()` is added as a shared helper for exactly the reason
+D-068's third bug happened. The generator is idempotent — a second call for a day that already has
+a list returns its count and changes nothing, because a rep's fifteen must not be reshuffled at
+11am — and `p_force` is what the Rebuild button passes.
+
+**Also fixed while here:** the RRR screen's status message lived in the assign bar, which only
+oversight roles see, so a rep logging a call got no confirmation at all. Moved to the toolbar.
+
+Verified: `scripts/test-ai-leads.mjs` 26/26; `test-rls.mjs` 27/27, `test-rrr-assign.mjs` 15/15 and
+`test-log-call.mjs` 8/8 all still pass after the policy change; typecheck and build clean; the page
+rendered against the live database as both an admin (1,336 rows, both lists) and a sales exec
+(exactly 15 AI leads in the payload); migration rolled back and re-applied cleanly.
+
+### D-070 · 2026-09-09 · Follow-up history becomes an actual timeline — and a label that was lying
+User: "Ye jo followup history hai wo kya timeline ki form me aa sakti hai?" The section was already
+called `.rrr-timeline` but it was a stack of bordered cards: no rail, no dots, and the wait between
+two calls left to be worked out from two dates. Now there is one rail down the left, a dot per
+entry coloured by outcome, hollow-and-dashed for a call that has not happened yet, and the silence
+between entries drawn as a chip that cuts the rail — coloured once it passes three weeks, roughly
+when a course runs down and a customer starts drifting. "Rang, rang, nothing for three months,
+rang" is the shape a rep needs at a glance, and it was the one thing the old list could not show.
+
+**Sorted by when the call happened, not when it was due.** `loadCustomerHistory` orders by
+`due_at`, but an entry belongs on the timeline at `completed_at ?? due_at`. The two drift apart
+every time a rep gets to a call late, which put entries out of order and made every gap between
+them meaningless. One `eventAt()` now feeds both the ordering and the gaps.
+
+**The label that was lying.** 21,387 of this database's 22,847 follow-ups are closed with no
+outcome — the legacy import, plus the queue rows whose sheet status carried no signal ("Others",
+"Not Contacted"), which `import-ai-queue.mjs` deliberately leaves NULL with the original text kept
+in the remark. The panel read a missing outcome as **"Pending"**, so a call made years ago was
+shown to the rep as work still waiting to be done — on the overwhelming majority of rows. The
+timeline is what exposed it: a solid "done" dot sitting next to a pill saying it had not happened.
+A closed follow-up says the call was made; a missing outcome says nobody wrote down what came of
+it, and those are two different facts. Now: no `completed_at` → "Pending" (66 rows, genuinely
+pending); closed with no outcome → **"No outcome recorded"**, neutral (21,387); closed with one →
+the outcome (1,394). The section heading stopped counting the two together too — "13 calls" now
+means thirteen calls that happened, with anything scheduled listed separately.
+
+Orders and calls stay two separate lists, matching the way the user asked for them in D-067
+("order history and followup history"). Interleaving order events onto the same rail is the
+obvious next step and is deliberately not taken here.
+
+Pure UI: no migration, no query change, `CallRow` already carried every field. Verified against the
+live database — the customer with the longest history (Pankaj, 13 follow-ups) renders in strict
+event order with correct gaps, nothing out of order after the sort; CSS/markup contract checked
+(every class styled, every `data-` selector reachable, braces balanced); dot ring and gap chip both
+paint in `var(--surface)`, which is what `.rrr-panel` actually uses, so the rail punches through
+cleanly in light and dark; typecheck and build clean. Not verified: the panel opens on click and
+there is no browser here, so the rendered geometry is unconfirmed — same standing gap as
+docs/design/live-ui-verification.md records.
