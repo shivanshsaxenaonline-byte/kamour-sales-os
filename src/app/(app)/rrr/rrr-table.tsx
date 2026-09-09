@@ -259,11 +259,34 @@ export function RrrTable({
       <div className="grid-toolbar">
         <h1>RRR</h1>
 
-        <label className="sr-only" htmlFor="rrr-list">List</label>
-        <select id="rrr-list" value={list} onChange={(e) => switchList(e.target.value as 'all' | 'ai')}>
-          <option value="all">All customers</option>
-          <option value="ai">AI Leads — today</option>
-        </select>
+        {/* Tabs, not a dropdown. This is WHICH LIST you are looking at, which
+            is the same choice Leads, Consultation and Orders all make with
+            tabs — and as a select it sat two controls away from the stage
+            filter whose first option also read "All customers", so the two
+            were indistinguishable and the AI list looked like it was missing.
+            The counts are the other half of the fix: a tab reading 0 says the
+            list has not been generated, where an unopened dropdown said
+            nothing at all. */}
+        <div className="module-tabs" role="tablist" aria-label="RRR views">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isAi}
+            className={isAi ? '' : 'active'}
+            onClick={() => switchList('all')}
+          >
+            All customers<span>{rows.length.toLocaleString('en-IN')}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isAi}
+            className={isAi ? 'active' : ''}
+            onClick={() => switchList('ai')}
+          >
+            AI Leads · today<span>{aiLeads.length.toLocaleString('en-IN')}</span>
+          </button>
+        </div>
 
         <span className="muted">
           {visible.length
@@ -300,7 +323,9 @@ export function RrrTable({
           <>
             <label className="sr-only" htmlFor="rrr-stage">Stage</label>
             <select id="rrr-stage" value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
-              <option value="all">All customers</option>
+              {/* "Any stage", not "All customers": this is a stage filter, and
+                  the old wording collided with the list tab beside it. */}
+              <option value="all">Any stage</option>
               <option value="untouched">Untouched — never called</option>
               <option value="overdue">Overdue follow-up</option>
               <option value="inactive">Inactive 90+ days</option>
