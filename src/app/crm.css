@@ -241,7 +241,11 @@
   height: 40px;
   margin-left: 6px;
 }
-.module-tabs button {
+.module-tabs button,
+.module-tabs a {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -251,16 +255,19 @@
   color: var(--text-dim);
   font-weight: 500;
 }
-.module-tabs button.active {
+.module-tabs button.active,
+.module-tabs a.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
-.module-tabs button > span {
+.module-tabs button > span,
+.module-tabs a > span {
   font-size: 10px;
   margin-left: 5px;
   color: var(--text-dim);
 }
-.module-tabs button:hover {
+.module-tabs button:hover,
+.module-tabs a:hover {
   background: var(--hover);
 }
 .today-caption {
@@ -805,11 +812,13 @@
   font-size: 11px;
 }
 @media (max-width: 1300px) {
-  .module-tabs button {
+  .module-tabs button,
+  .module-tabs a {
     padding: 0 4px;
     font-size: 10px;
   }
-  .module-tabs button > span {
+  .module-tabs button > span,
+  .module-tabs a > span {
     margin-left: 3px;
   }
   .grid-search input {
@@ -1104,4 +1113,133 @@
   margin-top: 4px;
   line-height: 1.4;
   white-space: normal;
+}
+
+/* ---- RRR: the customer filter panel ------------------------------------ */
+/* A band under the toolbar, on --bg so it reads as chrome around the table
+   rather than as another row of it. It is flex: 0 0 auto inside .data-grid,
+   so the table keeps every pixel the panel does not take. */
+.rrr-filters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.rrr-filters-head,
+.rrr-filters-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rrr-filters-head .muted {
+  font-size: 11px;
+}
+.rrr-filters-foot .muted {
+  font-size: 11px;
+  margin-left: 4px;
+}
+/* The saved questions. Pills, so they never look like the controls below
+   them — one click is a whole filter set, not one field. */
+.rrr-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rrr-chip {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border-color: var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rrr-chip.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+/* auto-fit, so the row of fields reflows from seven columns to two on a
+   narrow window instead of scrolling sideways. */
+.rrr-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+  gap: 8px 10px;
+}
+.rrr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.rrr-field > span {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.rrr-field > input,
+.rrr-field > select {
+  width: 100%;
+  font-size: 12px;
+}
+/* Search is the field people type in most, so it gets two columns of the
+   grid — until the grid itself is down to two, where it takes the row. */
+.rrr-field.wide {
+  grid-column: span 2;
+}
+@media (max-width: 700px) {
+  .rrr-field.wide {
+    grid-column: span 1;
+  }
+}
+.rrr-segmented {
+  display: flex;
+  height: 28px;
+  border: 1px solid var(--border-str);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.rrr-segmented button {
+  flex: 1;
+  min-height: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.rrr-segmented button + button {
+  border-left: 1px solid var(--border);
+}
+.rrr-segmented button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* The toolbar's own toggle. Carries the count so a collapsed panel can still
+   say that the list in front of you is filtered. */
+.rrr-filters-btn {
+  height: 27px;
+  font-size: 11px;
+}
+.rrr-filters-btn.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.rrr-filters-btn > span {
+  display: inline-block;
+  min-width: 15px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
 }

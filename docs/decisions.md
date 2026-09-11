@@ -774,3 +774,50 @@ paint in `var(--surface)`, which is what `.rrr-panel` actually uses, so the rail
 cleanly in light and dark; typecheck and build clean. Not verified: the panel opens on click and
 there is no browser here, so the rendered geometry is unconfirmed — same standing gap as
 docs/design/live-ui-verification.md records.
+
+
+### D-071 · 2026-09-11 · RRR All customers gets a real filter panel
+User: "rrr me all customer page m mujhe option chaiye filters lagane ka … i want that in an
+organised manner", with a screenshot of the team's own RRR Intelligence Dashboard as the reference.
+The screen had three controls — a search box and two dropdowns — sharing a 40px toolbar with the
+title, the list tabs and the row count. That is enough to answer "show me overdue", and nothing
+more; the questions the floor actually opens 1,336 customers with are compound ("prepaid repeat
+buyers worth ₹20k that nobody has called"), and there was no way to ask one.
+
+**A panel under the toolbar, not more dropdowns in it.** Labelled fields in an auto-fit grid —
+search, customer type, payment, activity, follow-up stage, owner, sort — with the four rarely-used
+ones (last outcome, minimum orders, minimum LTV, DND) folded behind **More filters**, the six
+daily questions as one-click chips above them, an **N active** badge, and **Clear filters**. The
+toolbar keeps a **Filters** toggle that carries the count, so a collapsed panel still says the
+list in front of you is narrowed.
+
+**Every option is a column the screen already shows.** Activity reuses the bands the Activity pill
+paints (≤90d active, 91–180 cooling, 180+ inactive, plus "90d+" as one option because that is the
+line the old stage filter drew and the floor still asks for it); follow-up stage reuses what the
+Follow-up column computes; payment matches the three profiles `v_rrr_queue` returns; last outcome
+comes from the same vocabulary the Log-call dialog writes. A filter and the column it filters on
+cannot disagree, and no migration was needed — every field was already in the view.
+
+**No RFM segment**, which the reference dashboard has. D-067 removed segment from this screen at
+the user's own request ("ye segment wali cheez is just a confusion"), and putting an A1..C2
+dropdown back is that decision reversed, not a filter added. Said out loud rather than silently
+skipped; one line to bring it back if the answer has changed.
+
+Sort is deliberately not counted as an active filter — it changes the order, never the count — and
+defaults to the server's own unassigned-first order rather than to highest-value, so opening the
+screen still shows the work in the order it is handed out. Presets reset everything they do not
+set, so a chip is a whole answer rather than a layer on leftovers, and clicking the chip you are
+on takes it off; search and owner survive a preset, so a rep filtered to their own book stays in
+it.
+
+**Fixed on the way past:** the list tabs are `<Link>`s since they became two routes, but every
+`.module-tabs` rule was still written for `<button>`, so both tabs rendered as bare underlined
+text run together ("All customers1,336 AI Leads · today45" in the user's screenshot). The four
+rules now match anchors too.
+
+Pure UI: no migration, no query change. Verified by transpiling the component and rendering it
+with synthetic rows — the bands, the follow-up stages, all seven comparators, every preset, and
+the rendered panel (chips, field labels, advanced fields hidden, match line, AI list untouched)
+all check out; CSS class/brace contract checked; typecheck and build clean. Not verified: nobody
+clicked a filter in a browser — the state composition inside the memo is typechecked, not
+exercised, the same standing gap docs/design/live-ui-verification.md records.

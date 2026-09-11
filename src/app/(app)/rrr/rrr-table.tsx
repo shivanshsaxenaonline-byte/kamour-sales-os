@@ -122,6 +122,139 @@ const timeLabel = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-IN',
     { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
+/** Every condition the All-customers filter panel can hold. All of them are
+ *  strings — including the two numeric boxes — because that is what an
+ *  <input> and a <select> hand back, and parsing once at filter time beats
+ *  carrying a half-typed "12" around as NaN. */
+type Filters = {
+  search: string;
+  type: string;
+  payment: string;
+  activity: string;
+  stage: string;
+  outcome: string;
+  owner: string;
+  dnd: string;
+  minOrders: string;
+  minValue: string;
+  sort: string;
+};
+
+const NO_FILTERS: Filters = {
+  search: '', type: 'all', payment: 'all', activity: 'all', stage: 'all',
+  outcome: 'all', owner: 'all', dnd: 'all', minOrders: '', minValue: '',
+  // Not "highest value first": the list arrives unassigned-first from the
+  // server, which is the order the work is handed out in, and a default sort
+  // here would silently throw that away.
+  sort: 'queue',
+};
+
+const TYPES = [
+  { value: 'all', label: 'All' },
+  { value: 'new', label: 'New' },
+  { value: 'repeat', label: 'Repeat' },
+];
+
+// The three profiles v_rrr_queue computes (027). Matched by label, because
+// that is what the view returns and what the Payment column already shows.
+const PAYMENTS = [
+  { value: 'all', label: 'All payment types' },
+  { value: 'Prepaid only', label: 'Prepaid only' },
+  { value: 'COD only', label: 'COD only' },
+  { value: 'Mixed', label: 'Mixed' },
+];
+
+// The same bands the Activity pill paints, so a filter and the column it
+// filters on can never disagree.
+const ACTIVITIES = [
+  { value: 'all', label: 'All activity stages' },
+  { value: 'active', label: 'Active · ordered within 90d' },
+  // Both halves of "gone quiet" as one option, because that is the line the
+  // screen drew before this panel existed and the floor still asks for it.
+  { value: 'inactive', label: 'Inactive · 90d+' },
+  { value: 'cooling', label: 'Cooling · 91–180d' },
+  { value: 'dormant', label: 'Inactive · 180d+' },
+  { value: 'never', label: 'No orders on record' },
+];
+
+const STAGES = [
+  { value: 'all', label: 'All follow-up stages' },
+  { value: 'untouched', label: 'Untouched — never called' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'today', label: 'Due today' },
+  { value: 'upcoming', label: 'Scheduled later' },
+  { value: 'closed', label: 'Called, nothing scheduled' },
+];
+
+const DND_OPTIONS = [
+  { value: 'all', label: 'Include DND' },
+  { value: 'exclude', label: 'Hide DND' },
+  { value: 'only', label: 'DND only' },
+];
+
+const SORTS = [
+  { value: 'queue', label: 'Unassigned first (default)' },
+  { value: 'value', label: 'Highest amount first' },
+  { value: 'orders', label: 'Most orders first' },
+  { value: 'aov', label: 'Highest AOV first' },
+  { value: 'recent', label: 'Most recent order first' },
+  { value: 'stale', label: 'Longest inactive first' },
+  { value: 'due', label: 'Follow-up due soonest' },
+  { value: 'name', label: 'Name A–Z' },
+];
+
+const COMPARE: Record<string, (a: RrrRow, b: RrrRow) => number> = {
+  value: (a, b) => b.lifetime_value - a.lifetime_value,
+  orders: (a, b) => b.lifetime_orders - a.lifetime_orders,
+  aov: (a, b) => (b.aov ?? 0) - (a.aov ?? 0),
+  // Never-ordered sorts last either way, rather than pretending to be day 0.
+  recent: (a, b) => (a.days_since_order ?? Infinity) - (b.days_since_order ?? Infinity),
+  stale: (a, b) => (b.days_since_order ?? -1) - (a.days_since_order ?? -1),
+  due: (a, b) => (a.next_due_on ?? '9999-12-31').localeCompare(b.next_due_on ?? '9999-12-31'),
+  name: (a, b) => a.full_name.localeCompare(b.full_name),
+};
+
+/** The questions the floor actually opens this screen with, one click each.
+ *  Anything a preset does not set goes back to its default, so a chip is a
+ *  whole answer and not a layer on top of whatever was left over. */
+const PRESETS: { id: string; label: string; patch: Partial<Filters> }[] = [
+  { id: 'spenders', label: 'Highest spenders', patch: { sort: 'value' } },
+  { id: 'orders', label: 'Most orders', patch: { sort: 'orders' } },
+  { id: 'prepaid', label: 'Prepaid repeat', patch: { type: 'repeat', payment: 'Prepaid only', sort: 'value' } },
+  { id: 'cold', label: 'Inactive high-value', patch: { activity: 'dormant', minValue: '20000', sort: 'value' } },
+  { id: 'untouched', label: 'Never called', patch: { stage: 'untouched', sort: 'value' } },
+  { id: 'overdue', label: 'Overdue follow-ups', patch: { stage: 'overdue', sort: 'due' } },
+];
+
+/** Today on the sales floor. Read per filter pass rather than once at import,
+ *  so a screen left open overnight does not keep yesterday's idea of
+ *  "overdue" — the same reason RrrScreen has its own istToday(). */
+const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+
+function activityBand(days: number | null) {
+  if (days == null) return 'never';
+  if (days <= 90) return 'active';
+  if (days <= 180) return 'cooling';
+  return 'dormant';
+}
+
+/** Where this customer sits in the follow-up cycle — the state the Follow-up
+ *  column already reads, reduced to the one word a filter can match. */
+function followUpStage(r: RrrRow, today: string) {
+  if (r.next_due_on) {
+    if (r.next_due_on < today) return 'overdue';
+    if (r.next_due_on === today) return 'today';
+    return 'upcoming';
+  }
+  return (r.attempts ?? 0) > 0 ? 'closed' : 'untouched';
+}
+
+/** Two filter sets ask the same question when everything except who you are
+ *  searching for and whose book you are in matches. Used to light up the
+ *  preset chip you are currently standing on. */
+const shapeOf = (f: Filters) => JSON.stringify(
+  [f.type, f.payment, f.activity, f.stage, f.outcome, f.dnd, f.minOrders, f.minValue, f.sort]);
+
 export function RrrTable({
   mode, rows, aiLeads, counts, aiRun, reps, canAssign, numbers,
 }: {
@@ -135,10 +268,12 @@ export function RrrTable({
   numbers: ContactNumber[];
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [owner, setOwner] = useState('all');
-  const [stage, setStage] = useState('all');
+  // One object, not eleven useStates: a preset sets six of them at once, and
+  // "clear" has to put every one of them back without listing them again.
+  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [showMore, setShowMore] = useState(false);
   const [bucket, setBucket] = useState('all');
-  const [search, setSearch] = useState('');
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -162,7 +297,15 @@ export function RrrTable({
 
   const visible = useMemo(() => {
     const source: RrrRow[] = isAi ? aiLeads : rows;
-    return source.filter((r) => {
+    const { search, owner } = filters;
+    const q = search.trim().toLowerCase();
+    // Digits only, so "+91 99458" and "99458" find the same customer.
+    const digits = q.replace(/\D/g, '');
+    const minOrders = filters.minOrders === '' ? null : Number(filters.minOrders);
+    const minValue = filters.minValue === '' ? null : Number(filters.minValue);
+    const today = istToday();
+
+    const kept = source.filter((r) => {
       if (isAi) {
         const a = r as AiLeadRow;
         // In this list "owner" means who is calling them TODAY, not who owns
@@ -173,17 +316,74 @@ export function RrrTable({
       } else {
         if (owner === 'unassigned' && r.current_owner_id) return false;
         if (owner !== 'all' && owner !== 'unassigned' && r.current_owner_id !== owner) return false;
-        if (stage === 'untouched' && (r.attempts ?? 0) > 0) return false;
-        if (stage === 'overdue' && !(r.next_due_on && new Date(r.next_due_on) < new Date())) return false;
-        if (stage === 'inactive' && (r.days_since_order ?? 0) <= 90) return false;
+        if (filters.type === 'new' && r.is_repeat_buyer) return false;
+        if (filters.type === 'repeat' && !r.is_repeat_buyer) return false;
+        if (filters.payment !== 'all' && r.payment_profile !== filters.payment) return false;
+        if (filters.activity !== 'all') {
+          const band = activityBand(r.days_since_order);
+          if (filters.activity === 'inactive') {
+            if (band === 'active' || band === 'never') return false;
+          } else if (band !== filters.activity) return false;
+        }
+        if (filters.stage !== 'all' && followUpStage(r, today) !== filters.stage) return false;
+        if (filters.outcome !== 'all' && r.last_outcome !== filters.outcome) return false;
+        if (filters.dnd === 'exclude' && r.is_dnd) return false;
+        if (filters.dnd === 'only' && !r.is_dnd) return false;
+        if (minOrders != null && r.lifetime_orders < minOrders) return false;
+        if (minValue != null && r.lifetime_value < minValue) return false;
       }
-      if (search) {
-        const q = search.toLowerCase();
-        if (!r.full_name.toLowerCase().includes(q) && !r.phone_e164.includes(q)) return false;
+      if (q) {
+        const byName = r.full_name.toLowerCase().includes(q);
+        const byPhone = digits.length > 0 && r.phone_e164.replace(/\D/g, '').includes(digits);
+        if (!byName && !byPhone) return false;
       }
       return true;
     });
-  }, [isAi, rows, aiLeads, owner, stage, bucket, search]);
+
+    // The AI list is already in the order the generator ranked it, and that
+    // ranking is the product — it does not get re-sorted here.
+    const compare = isAi ? null : COMPARE[filters.sort];
+    return compare ? [...kept].sort(compare) : kept;
+  }, [isAi, rows, aiLeads, filters, bucket]);
+
+  /** How many conditions are narrowing the list right now. Sort is not one of
+   *  them — it changes the order, never the count — so it is deliberately not
+   *  counted, or the badge would read "1 active" on an unfiltered screen. */
+  const activeCount = useMemo(() => {
+    let n = filters.search.trim() ? 1 : 0;
+    for (const k of ['type', 'payment', 'activity', 'stage', 'outcome', 'owner', 'dnd'] as const) {
+      if (filters[k] !== NO_FILTERS[k]) n++;
+    }
+    if (filters.minOrders !== '') n++;
+    if (filters.minValue !== '') n++;
+    return n;
+  }, [filters]);
+
+  const shape = shapeOf(filters);
+
+  function setFilter(key: keyof Filters, value: string) {
+    setFilters((f) => ({ ...f, [key]: value }));
+    // Page 3 of a list that just became 40 rows long is a blank screen.
+    setPage(1);
+  }
+
+  function applyPreset(patch: Partial<Filters>) {
+    const wanted = { ...NO_FILTERS, ...patch };
+    setFilters((f) => ({
+      // Clicking the chip you are already standing on takes it off again.
+      ...(shapeOf(f) === shapeOf(wanted) ? NO_FILTERS : wanted),
+      // Who you are searching for and whose book you are in survive a preset:
+      // a rep filtered to their own customers stays in their own customers.
+      search: f.search,
+      owner: f.owner,
+    }));
+    setPage(1);
+  }
+
+  function clearFilters() {
+    setFilters(NO_FILTERS);
+    setPage(1);
+  }
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   // A filter change can leave you past the end; clamp rather than showing a
@@ -285,45 +485,213 @@ export function RrrTable({
 
         <div className="toolbar-spacer" />
 
-        <label className="grid-search">
-          <span className="sr-only">Search customer</span>
-          <input
-            type="search"
-            value={search}
-            placeholder="Name or mobile number…"
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          />
-        </label>
-
+        {/* On the AI list the controls stay in the toolbar: 45 rows need a
+            search box and two dropdowns, not a panel. The All-customers list
+            is 1,336 rows and gets the panel below. */}
         {isAi ? (
           <>
+            <label className="grid-search">
+              <span className="sr-only">Search customer</span>
+              <input
+                type="search"
+                value={filters.search}
+                placeholder="Name or mobile number…"
+                onChange={(e) => setFilter('search', e.target.value)}
+              />
+            </label>
+
             <label className="sr-only" htmlFor="rrr-bucket">Why it was picked</label>
             <select id="rrr-bucket" value={bucket} onChange={(e) => { setBucket(e.target.value); setPage(1); }}>
               <option value="all">All reasons</option>
               {buckets.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}
             </select>
-          </>
-        ) : (
-          <>
-            <label className="sr-only" htmlFor="rrr-stage">Stage</label>
-            <select id="rrr-stage" value={stage} onChange={(e) => { setStage(e.target.value); setPage(1); }}>
-              {/* "Any stage", not "All customers": this is a stage filter, and
-                  the old wording collided with the list tab beside it. */}
-              <option value="all">Any stage</option>
-              <option value="untouched">Untouched — never called</option>
-              <option value="overdue">Overdue follow-up</option>
-              <option value="inactive">Inactive 90+ days</option>
+
+            <label className="sr-only" htmlFor="rrr-owner">Calling today</label>
+            <select id="rrr-owner" value={filters.owner} onChange={(e) => setFilter('owner', e.target.value)}>
+              <option value="all">Everyone’s leads</option>
+              <option value="unassigned">Unassigned only</option>
+              {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
             </select>
           </>
+        ) : (
+          <button
+            type="button"
+            className={`rrr-filters-btn ${activeCount ? 'on' : ''}`}
+            onClick={() => setPanelOpen((o) => !o)}
+            aria-expanded={panelOpen}
+            aria-controls="rrr-filters"
+          >
+            {panelOpen ? 'Hide filters' : 'Filters'}
+            {activeCount ? <span>{activeCount}</span> : null}
+          </button>
         )}
-
-        <label className="sr-only" htmlFor="rrr-owner">Owner</label>
-        <select id="rrr-owner" value={owner} onChange={(e) => { setOwner(e.target.value); setPage(1); }}>
-          <option value="all">{isAi ? 'Everyone’s leads' : 'Everyone'}</option>
-          <option value="unassigned">Unassigned only</option>
-          {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
-        </select>
       </div>
+
+      {/* Filters get a panel of their own rather than three dropdowns crammed
+          into the toolbar. The floor's question is never "show me everyone" —
+          it is "prepaid repeat buyers worth ₹20k nobody has called yet", which
+          is four conditions at once. Labelled fields in a grid, the six
+          questions that get asked daily as one-click chips above them, the
+          rare ones folded behind "More filters", and a count of what is on, so
+          a surprising row total is never a mystery. */}
+      {!isAi && panelOpen ? (
+        <div className="rrr-filters" id="rrr-filters">
+          <div className="rrr-filters-head">
+            <strong>Customer filters</strong>
+            <span className="muted">Every condition you pick applies together.</span>
+            <div className="toolbar-spacer" />
+            <span className={`status-pill ${activeCount ? 'positive' : 'dashed'}`}>
+              {activeCount} active
+            </span>
+          </div>
+
+          <div className="rrr-chips-row">
+            {PRESETS.map((p) => {
+              const on = shapeOf({ ...NO_FILTERS, ...p.patch }) === shape;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`rrr-chip ${on ? 'on' : ''}`}
+                  aria-pressed={on}
+                  onClick={() => applyPreset(p.patch)}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rrr-filter-grid">
+            <label className="rrr-field wide">
+              <span>Search customer</span>
+              <input
+                type="search"
+                value={filters.search}
+                placeholder="Name or mobile number…"
+                onChange={(e) => setFilter('search', e.target.value)}
+              />
+            </label>
+
+            <div className="rrr-field">
+              <span id="rrr-type-label">Customer type</span>
+              {/* Three buttons, not a select: it is the one filter that is
+                  always three options and always worth seeing at a glance. */}
+              <div className="rrr-segmented" role="group" aria-labelledby="rrr-type-label">
+                {TYPES.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className={filters.type === t.value ? 'on' : ''}
+                    aria-pressed={filters.type === t.value}
+                    onClick={() => setFilter('type', t.value)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="rrr-field">
+              <span>Payment</span>
+              <select value={filters.payment} onChange={(e) => setFilter('payment', e.target.value)}>
+                {PAYMENTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+
+            <label className="rrr-field">
+              <span>Activity</span>
+              <select value={filters.activity} onChange={(e) => setFilter('activity', e.target.value)}>
+                {ACTIVITIES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+
+            <label className="rrr-field">
+              <span>Follow-up stage</span>
+              <select value={filters.stage} onChange={(e) => setFilter('stage', e.target.value)}>
+                {STAGES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+
+            <label className="rrr-field">
+              <span>Owner</span>
+              <select value={filters.owner} onChange={(e) => setFilter('owner', e.target.value)}>
+                <option value="all">Everyone</option>
+                <option value="unassigned">Unassigned only</option>
+                {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
+              </select>
+            </label>
+
+            <label className="rrr-field">
+              <span>Sort results</span>
+              <select value={filters.sort} onChange={(e) => setFilter('sort', e.target.value)}>
+                {SORTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {showMore ? (
+            <div className="rrr-filter-grid">
+              <label className="rrr-field">
+                <span>Last call outcome</span>
+                <select value={filters.outcome} onChange={(e) => setFilter('outcome', e.target.value)}>
+                  <option value="all">Any outcome</option>
+                  {/* Straight from the outcome vocabulary the Log-call dialog
+                      writes, so the filter can never list one the floor
+                      cannot record. */}
+                  {Object.entries(OUTCOME_LABEL).map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="rrr-field">
+                <span>Minimum orders</span>
+                <input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  value={filters.minOrders}
+                  placeholder="Any"
+                  onChange={(e) => setFilter('minOrders', e.target.value)}
+                />
+              </label>
+
+              <label className="rrr-field">
+                <span>Minimum lifetime value (₹)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  inputMode="numeric"
+                  value={filters.minValue}
+                  placeholder="Any"
+                  onChange={(e) => setFilter('minValue', e.target.value)}
+                />
+              </label>
+
+              <label className="rrr-field">
+                <span>Do-not-disturb</span>
+                <select value={filters.dnd} onChange={(e) => setFilter('dnd', e.target.value)}>
+                  {DND_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          <div className="rrr-filters-foot">
+            <button type="button" onClick={() => setShowMore((m) => !m)} aria-expanded={showMore}>
+              {showMore ? 'Fewer filters' : 'More filters'}
+            </button>
+            <button type="button" onClick={clearFilters} disabled={!activeCount}>
+              Clear filters
+            </button>
+            <span className="muted">
+              {visible.length.toLocaleString('en-IN')} of {rows.length.toLocaleString('en-IN')} customers match
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       {isAi ? (
         <div className="grid-toolbar rrr-aibar">
