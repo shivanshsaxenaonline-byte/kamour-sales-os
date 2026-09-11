@@ -912,3 +912,44 @@ reading it found none of them. Related: the 8 September gap in logged calls is n
 user has been building a dashboard since then and will backfill. When that import runs,
 `completed_at` must carry the real call date, because retry timing, cooldown and every rate in
 D-072 now read it (D-068 records what happened the last time an import defaulted dates to `now()`).
+
+### D-074 · 2026-09-11 · Razorpay's own record, 12,399 payments, stored verbatim
+User: "razorpay ka data aa raha hai in accordance to payment time, number, all metric, aur usko hum
+phir use kar lenge baad me match karke" — because a person retyping into the annual sheet makes
+spelling mistakes. **032** adds `razorpay_payments` (the entity, typed for what gets queried and
+whole in `raw` for what does not yet), `razorpay_events` (every delivery, signature failures
+included), and `v_razorpay_unmatched` (candidates, never a conclusion). Two writers, both keyed on
+the Razorpay payment id so neither can double-count: `scripts/import-razorpay.mjs` for history and
+the `razorpay-webhook` Edge Function for everything after. Matching is deliberately absent at
+ingest — a wrong link in a money table is worse than no link (D-011).
+
+**Backfill, 2022 to date: 12,399 payments, 8,083 captured, ₹44,70,397 collected.** 93% UPI. The
+table is 18 MB; the database went 83 → 101 MB.
+
+**What it shows, and none of it was visible before.** Razorpay is two businesses in one account:
+3,188 payments around ₹99 (the paid-lead fee) and **833 at ₹1,500+ totalling ₹27.88 lakh** — real
+medicine money, about half of the ₹56.3 lakh the order book records.
+
+- **5,913 people paid and never ordered**, ₹20.9 lakh received. 165 of them paid ₹1,500 or more.
+- **411 medicine-sized payments, ₹13.28 lakh, from 165 people with no order on file at that phone.**
+  Innocent explanations exist — paid from a spouse's phone, recorded in the sheet under a typo,
+  an order that predates the import — and that is precisely the user's point: until now there was
+  no way to even ask the question. **Not a conclusion. A list to work through.**
+- **2,853 people attempted a payment that failed; 1,845 never succeeded at all.** 229 of those
+  failed within the last 180 days, never paid, never ordered — a callable list that did not exist
+  yesterday.
+- Razorpay collections fell from ₹21.1 lakh (2025) to ₹4.46 lakh (2026 so far), matching the drop
+  to 5% of recent orders found in D-072. The floor moved to direct GPay, which no webhook can see.
+
+**A number I got wrong and corrected before reporting:** the first "paid but never ordered" total
+read ₹40.9 lakh because a per-phone sum was joined onto every payment row, counting a phone with
+three payments three times. Per person it is ₹20.9 lakh.
+
+**Credentials:** the user supplied live keys in-chat and asked for them to be installed. Written to
+`.env.local` only, which is in `.gitignore` and untracked — verified both before writing. They are
+live keys that have now passed through a chat, so rotation after the backfill is not optional; the
+user has said they will, and it is restated here so it is not forgotten.
+
+**Not done:** the Edge Function is written but not deployed, and no payment is linked to an order
+yet. Deploying it needs only `supabase functions deploy razorpay-webhook --no-verify-jwt` and the
+webhook secret — notably it does not depend on the Vercel deploy, which is still pending.
