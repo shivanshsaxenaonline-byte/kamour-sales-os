@@ -885,3 +885,30 @@ Verified against the live database: migration applied, list regenerated, mix and
 confirmed by query; typecheck and build clean. Not verified: no browser here, so the AI Leads
 screen rendering the new bucket labels and colours is unconfirmed — the standing gap
 docs/design/live-ui-verification.md records.
+
+### D-073 · 2026-09-11 · A lead nobody called is not a lead that was worked
+User: "kuch aise leads ho sakte h jo inlogo ko assign kiye gye but inlogo ne ni kiye poore usdin
+then?" The system treated them as finished. 028 excluded from today's list anyone who had appeared
+on **any** list in the previous seven days — the sheet's own cooldown — but appearing on a list is
+not contact. Measured before the fix: **88 customers** dealt out on 9–10 September, never rung, and
+blocked until the 16th; **19 of them promised callbacks averaging score 78**, the highest-intent
+leads the generator produces.
+
+**031** makes the cooldown count calls rather than listings (`fu.last_done` already tracked what was
+actually dialled, so the list-based exclusion is dropped), and carries unfinished leads back to
+**the same rep**, at the top of their list, labelled "Carried over from 10 Sep — not called yet".
+Capped at 60% of a rep's day and looking back 3 days, so a rep who misses a day does not spend the
+next one entirely in the past while today's refill window closes on its own.
+
+Verified by regenerating: 27 carried / 18 fresh, all 27 back to the rep who already had them, 9+6
+per rep, carried at the top with the label, 45 distinct customers, nothing over a year, mix still
+balanced. Customers not carried are no longer blocked — they are eligible again and simply did not
+make today's 45 on score.
+
+**Why the last three migrations exist at all:** 029 was correct on paper and wrong twice in
+practice (030), and 031 fixes a rule inherited from 028 that only showed itself once real lists
+were being generated against a floor that was not calling. Running the thing found all three;
+reading it found none of them. Related: the 8 September gap in logged calls is not a fault — the
+user has been building a dashboard since then and will backfill. When that import runs,
+`completed_at` must carry the real call date, because retry timing, cooldown and every rate in
+D-072 now read it (D-068 records what happened the last time an import defaulted dates to `now()`).
