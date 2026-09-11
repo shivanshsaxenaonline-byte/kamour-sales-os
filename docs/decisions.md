@@ -821,3 +821,67 @@ the rendered panel (chips, field labels, advanced fields hidden, match line, AI 
 all check out; CSS class/brace contract checked; typecheck and build clean. Not verified: nobody
 clicked a filter in a browser — the state composition inside the memo is typechecked, not
 exercised, the same standing gap docs/design/live-ui-verification.md records.
+
+
+### D-072 · 2026-09-11 · The daily list aims at the refill window
+User asked what the data says, how three reps should be split, and then: put that logic into the
+AI list itself. Read-only queries against the live database, over the **1,394 calls that carry a
+recorded outcome** (Jul–Sep 2026; the other 21,387 follow-ups are the legacy import and were closed
+with no outcome, so they say how much calling happened and nothing about what it did). Recency
+measured against the last order placed **before** each call — using `customers.last_order_at`
+counts the order the call itself won and drags every winning call into the freshest band.
+
+| days since last order | calls | ordered within 30d |
+|---|---|---|
+| 0–30 | 273 | 76 (27.8%) |
+| 31–60 | 174 | 24 (13.8%) |
+| 61–90 | 157 | 14 (8.9%) |
+| 91–180 | 209 | 19 (9.1%) |
+| 181–365 | 292 | 9 (3.1%) |
+| over a year | 289 | **0 (0.0%)** |
+
+**57% of all calls went to the bottom three rows.** The 028 mix sent 18 of every 45 leads there too.
+Every rep converts 25–45% inside 35 days and 1.2–6.9% outside it, so the spread between the best and
+weakest rep is 20 points where the spread between a good and a bad list is 20–30×: **it is the list,
+not the person.**
+
+**029** re-aims the generator. Seven buckets replace five, ordered by what converts: `refill`
+(26%), `retry` (20%), `overdue` (13), `slipping` (13), `topbook` (13), `cooling` (7),
+`revival` (7). Three structural changes behind them:
+- **Nothing over 365 days** is eligible at all. That group is reached by WhatsApp instead; whoever
+  answers returns through the ordinary rules.
+- **The window is computed from the course the customer actually bought.**
+  `orders.course_duration_days` has been populated all along (294 orders at 15 days, 42 at 30)
+  while `customers.course_ends_at` is NULL for all 1,336 — the one date that should drive the
+  day's calling had never been calculated anywhere. The window now opens five days before the
+  course runs dry: day 10 for a fortnight's course, day 25 for a month's.
+- **A missed call is no longer a seven-day cooldown.** 880 calls went unanswered and only 108 ever
+  got a second attempt, though attempt 2 connects 46.3% against attempt 1's 35.5%. Retry waits one
+  day, up to three attempts.
+
+**030 corrects two things 029 got wrong, both found by running it rather than by reading it.**
+The retry bucket is cross-cutting, so it caught anyone who missed a call in the last fortnight —
+including people whose last order averaged **223 days ago**, spending nine slots re-dialling the
+3% band. Retries are now capped at 90 days. And the day is dealt like cards against the *score*
+order, where a bucket's members are scattered: the first run gave Ashutosh six refill leads and the
+other two three each. Everyone got fifteen; they were not the same fifteen. The deal now runs
+bucket by bucket while the rank a rep reads stays in score order. Equal mixes are also the only way
+the floor can ever learn which rep converts better — today it cannot, because it has never dealt
+them comparable lists.
+
+Result on today's regenerated list: every rep gets 6 refill · 3 overdue · 1–2 topbook · 1–2
+slipping · 1 cooling · 1 retry · 1 revival, **76% of the list is inside 90 days** against 27%
+yesterday, and nothing over a year appears.
+
+The mix itself stays **data, not code** — `ai_lead_rules.share_pct`, editable by the roles that
+hand out work — so the monthly loop (re-score each bucket by orders per 100 calls, move at most two
+slots) needs no deploy.
+
+**Flagged, not actioned:** the last call logged anywhere is **8 September**, three days ago, while
+orders are still arriving. Either the floor stopped logging or the sheet sync stopped writing.
+Every number above depends on that feed.
+
+Verified against the live database: migration applied, list regenerated, mix and per-rep shape
+confirmed by query; typecheck and build clean. Not verified: no browser here, so the AI Leads
+screen rendering the new bucket labels and colours is unconfirmed — the standing gap
+docs/design/live-ui-verification.md records.

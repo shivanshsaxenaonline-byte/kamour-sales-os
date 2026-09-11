@@ -69,10 +69,17 @@ const OUTCOME_TONE: Record<string, string> = {
 // from the database (bucket_label) so a renamed rule needs no deploy; only the
 // colour lives here, because a colour is a UI decision.
 const BUCKET_TONE: Record<string, string> = {
-  overdue: 'critical',
+  // 029's mix, in the order the numbers put them.
+  refill: 'positive',            // the course is running out — the band that pays
+  retry: 'attention-outline',    // did not pick up, second attempt
+  overdue: 'critical',           // a date already promised to the customer
+  topbook: 'positive-outline',   // top 10% by lifetime value, on a cycle
+  slipping: 'attention',
+  cooling: 'neutral',
+  revival: 'dashed',
+  // 028's codes, kept so a list generated before 029 still paints correctly.
   kamour: 'positive-outline',
   active: 'positive',
-  cooling: 'attention',
   dormant: 'neutral',
 };
 
