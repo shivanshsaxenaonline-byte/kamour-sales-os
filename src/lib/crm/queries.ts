@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import type { InfiniteData } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import {
   DETAIL_COLUMNS,
@@ -24,14 +25,15 @@ function makeListQuery(
   tab: string,
   search: string,
   head = false,
+  includeCount = head,
 ) {
   const config = MODULES[module];
   let query = createClient()
     .from(config.view)
-    .select(head ? (module === "today" ? "entity_id" : "id") : config.columns, {
-      count: "exact",
-      head,
-    });
+    .select(
+      head ? (module === "today" ? "entity_id" : "id") : config.columns,
+      includeCount ? { count: "exact", head } : { head },
+    );
   if (module === "leads") {
     query = query.eq("is_junk", tab === "junk");
     if (tab === "paid") query = query.eq("payment_state", "paid");
@@ -65,15 +67,33 @@ function makeListQuery(
 }
 
 export function useRecords(userId: string, options: ListOptions) {
-  return useQuery({
+  return useInfiniteQuery<
+    ListResult,
+    Error,
+    InfiniteData<ListResult>,
+    readonly unknown[],
+    number
+  >({
     queryKey: ["crm", userId, "list", options],
     enabled: !!userId,
-    queryFn: async ({ signal }): Promise<ListResult> => {
+    initialPageParam: 0,
+    getNextPageParam: (_lastPage, pages) => {
+      const count = pages[0]?.count ?? 0;
+      return pages.length * PAGE_SIZE < count ? pages.length : undefined;
+    },
+    queryFn: async ({ signal, pageParam }): Promise<ListResult> => {
       const config = MODULES[options.module];
       const key = (config.sortKeys as readonly string[]).includes(options.sort)
         ? options.sort
         : config.sort;
-      let query = makeListQuery(options.module, options.tab, options.search);
+      const page = typeof pageParam === "number" ? pageParam : 0;
+      let query = makeListQuery(
+        options.module,
+        options.tab,
+        options.search,
+        false,
+        page === 0,
+      );
       if (options.module === "today")
         query = query
           .order("rank_bucket", { ascending: true })
@@ -87,7 +107,7 @@ export function useRecords(userId: string, options: ListOptions) {
         .order(options.module === "today" ? "entity_id" : "id", {
           ascending: true,
         })
-        .range(options.page * PAGE_SIZE, (options.page + 1) * PAGE_SIZE - 1)
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
         .abortSignal(signal)
         .returns<CrmRow[]>();
       if (error) throw new Error(error.message);

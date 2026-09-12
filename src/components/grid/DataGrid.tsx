@@ -29,15 +29,18 @@ interface Props<T> {
   storageKey: string;
   datasetKey: string;
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
   error?: string;
   onRetry: () => void;
   sort: string;
   ascending: boolean;
   onSort: (key: string) => void;
-  page: number;
-  pageSize: number;
+  page?: number;
+  pageSize?: number;
   count: number;
-  onPage: (page: number) => void;
+  onPage?: (page: number) => void;
   expandedId: string | null;
   onOpen: (row: T) => void;
   onClose: () => void;
@@ -68,15 +71,18 @@ export function DataGrid<T extends object>({
   storageKey,
   datasetKey,
   loading,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   error,
   onRetry,
   sort,
   ascending,
   onSort,
-  page,
-  pageSize,
+  page = 0,
+  pageSize = rows.length || 1,
   count,
-  onPage,
+  onPage = () => {},
   expandedId,
   onOpen,
   onClose,
@@ -100,6 +106,7 @@ export function DataGrid<T extends object>({
     searchInput = useRef<HTMLInputElement>(null),
     columnDialog = useRef<HTMLDialogElement>(null),
     allCheckbox = useRef<HTMLInputElement>(null);
+  const loadRequested = useRef(false);
   const defaultHiddenKey = columns
     .filter((c) => c.defaultHidden)
     .map((c) => c.id)
@@ -134,6 +141,9 @@ export function DataGrid<T extends object>({
     anchor.current = 0;
     if (scroll.current) scroll.current.scrollTop = 0;
   }, [datasetKey]);
+  useEffect(() => {
+    if (!loadingMore) loadRequested.current = false;
+  }, [loadingMore]);
   const visible = useMemo(
     () =>
       columns.filter(
@@ -191,6 +201,23 @@ export function DataGrid<T extends object>({
   });
   const items = virtual.getVirtualItems();
   const selectedRows = rows.filter((r) => selection.has(getRowId(r)));
+  const loadMoreIfNeeded = useCallback(() => {
+    const element = scroll.current;
+    if (
+      !element ||
+      loading ||
+      loadingMore ||
+      !hasMore ||
+      loadRequested.current ||
+      element.scrollHeight - element.scrollTop - element.clientHeight > 240
+    ) return;
+    loadRequested.current = true;
+    onLoadMore();
+  }, [hasMore, loading, loadingMore, onLoadMore]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(loadMoreIfNeeded);
+    return () => cancelAnimationFrame(frame);
+  }, [loadMoreIfNeeded, rows.length]);
   const activeId =
     focus && rows.some((r) => getRowId(r) === focus)
       ? focus
@@ -377,6 +404,7 @@ export function DataGrid<T extends object>({
       <div
         className="grid-scroll"
         ref={scroll}
+        onScroll={loadMoreIfNeeded}
         tabIndex={0}
         role="region"
         aria-label="Records. J and K navigate, Enter opens, E edits, Space selects."
@@ -407,7 +435,7 @@ export function DataGrid<T extends object>({
                 <input
                   ref={allCheckbox}
                   type="checkbox"
-                  aria-label="Select all records on this page"
+                  aria-label="Select all loaded records"
                   disabled={loading || busy || rows.length === 0}
                   checked={
                     rows.length > 0 && selectedRows.length === rows.length
@@ -496,7 +524,7 @@ export function DataGrid<T extends object>({
                       key={item.key}
                       data-index={item.index}
                       ref={virtual.measureElement}
-                      aria-rowindex={page * pageSize + index + 2}
+                      aria-rowindex={index + 2}
                       className={`record-row ${activeId === id ? "keyboard-focused" : ""} ${selection.has(id) ? "selected" : ""} ${updatedIds?.has(id) ? "record-updated" : ""}`}
                       onClick={(e) => {
                         if (
@@ -597,7 +625,7 @@ export function DataGrid<T extends object>({
         >
           ‹
         </button>
-        <span>Page {page + 1}</span>
+        <span className="grid-page-label">Page {page + 1}</span>
         <button
           className="page-button"
           aria-label="Next page"

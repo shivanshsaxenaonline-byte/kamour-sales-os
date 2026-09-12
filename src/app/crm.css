@@ -630,6 +630,10 @@
   line-height: 17px;
   font-size: 16px;
 }
+.grid-footer .page-button,
+.grid-footer .grid-page-label {
+  display: none;
+}
 .crm-dialog {
   color: var(--text);
   background: var(--surface);

@@ -100,7 +100,6 @@ export interface Viewer {
 export interface ListOptions {
   module: ModuleName;
   tab: string;
-  page: number;
   search: string;
   sort: string;
   ascending: boolean;

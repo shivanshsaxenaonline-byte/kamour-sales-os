@@ -15,7 +15,6 @@ import {
   entityFor,
   MODULES,
   money,
-  PAGE_SIZE,
 } from "@/lib/crm/config";
 import type { CrmRow, EntityName, ModuleName } from "@/types/crm";
 
@@ -35,7 +34,6 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
     client = useQueryClient(),
     config = MODULES[module];
   const [tab, setTab] = useState<string>(config.defaultTab),
-    [page, setPage] = useState(0),
     [search, setSearch] = useState(""),
     [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState<string>(config.sort),
@@ -49,16 +47,15 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebounced(search);
-      setPage(0);
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
-  const options = { module, tab, page, search: debounced, sort, ascending };
+  const options = { module, tab, search: debounced, sort, ascending };
   const records = useRecords(viewer.id, options),
     counts = useTabCounts(viewer.id, module);
   const rows = useMemo(
     () =>
-      (records.data?.rows ?? EMPTY).map((r) =>
+      (records.data?.pages.flatMap((page) => page.rows) ?? EMPTY).map((r) =>
         patches[r.id] ? { ...r, ...patches[r.id] } : r,
       ),
     [records.data, patches],
@@ -421,8 +418,11 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
         getRowId={rowId}
         rowLabel={rowLabel}
         storageKey={`${storageKey}:columns`}
-        datasetKey={`${module}:${tab}:${page}:${debounced}:${sort}:${ascending}`}
+        datasetKey={`${module}:${tab}:${debounced}:${sort}:${ascending}`}
         loading={records.isPending}
+        loadingMore={records.isFetchingNextPage}
+        hasMore={records.hasNextPage}
+        onLoadMore={() => void records.fetchNextPage()}
         error={records.error?.message}
         onRetry={() => void records.refetch()}
         sort={sort}
@@ -431,15 +431,8 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
           resetInteraction();
           setSort(key);
           setAscending(key === sort ? !ascending : true);
-          setPage(0);
         }}
-        page={page}
-        pageSize={PAGE_SIZE}
-        count={records.data?.count ?? 0}
-        onPage={(next) => {
-          resetInteraction();
-          setPage(next);
-        }}
+        count={records.data?.pages[0]?.count ?? 0}
         expandedId={expanded}
         onOpen={open}
         onClose={() => {
@@ -508,7 +501,6 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
                     onClick={() => {
                       resetInteraction();
                       setTab(t.id);
-                      setPage(0);
                     }}
                   >
                     {t.label}
@@ -576,7 +568,6 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
                   setSearch(filter.search);
                   setSort(filter.sort);
                   setAscending(filter.ascending);
-                  setPage(0);
                   saved.current?.close();
                 }}
               >
