@@ -7,6 +7,7 @@ Supabase org: **184 MB/day with 4 users** against a **5 GB/month** org-pooled fr
 |---|---|---|---|---|---|
 | _pending_ | Phase 0 baseline | — | — | — | needs Supabase access (open-questions Q0) |
 | 2026-09-08 | Reviewed UI integration | — | Authenticated DB/Realtime egress not yet measured | Not queried | 50-row bounded lists; named view columns; detail reads only on expand; cached tab counts; no polling. Bundled Inter file measured at 48,256 bytes (web asset, not Supabase egress). |
+| 2026-09-12 | RRR server-side filter/sort/page (D-075) | 1 | /rrr list: 726 KB -> 27 KB per load (measured, 1,336-row base); 1,582 ms -> 100-574 ms | not queried | Was: whole base fetched on every visit, ~218 MB/day at 15 users. Now: one bounded range query with exact count. Select-all ids 77 KB, on demand only. Medicine Ending unchanged at 41.6 KB (130 rows, cap not binding). |
 
 Source: Supabase dashboard, Reports > Egress (Database + Realtime + Storage, separately).
 Record `pg_database_size()` after every import batch — a batch that grows the DB toward 1.5x

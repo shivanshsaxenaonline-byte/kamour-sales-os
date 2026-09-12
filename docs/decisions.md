@@ -953,3 +953,74 @@ user has said they will, and it is restated here so it is not forgotten.
 **Not done:** the Edge Function is written but not deployed, and no payment is linked to an order
 yet. Deploying it needs only `supabase functions deploy razorpay-webhook --no-verify-jwt` and the
 webhook secret — notably it does not depend on the Vercel deploy, which is still pending.
+
+### D-075 · 2026-09-12 · RRR stops shipping the whole base to render fifty rows
+
+**Measured first.** `/rrr` loaded every customer in the base on every visit: **726 KB of Supabase
+egress and 1,582 ms across two sequential requests, to display 50 rows.** At 15 users that is
+roughly **218 MB/day from one screen** — more than the 184 MB/day baseline PROJECT.md calls the
+binding constraint, and a direct breach of its own first rule ("every list paginated, default 50,
+range queries only"). D-071 built the filter panel client-side, which is what made the full load
+necessary; this moves the filtering to where the data already is.
+
+**Every condition is now SQL.** One bounded range query carrying `count: 'exact'`, so the footer's
+"1–50 of 1,336" costs no extra round trip. Measured across every filter and sort combination:
+**100–574 ms, 27–29 KB.** Worst case is a sort on a lateral-derived column (`next_due_on`), which
+cannot use an index; it is still ~25× cheaper than what it replaced.
+
+**Proof it did not change behaviour.** The old in-browser predicates were replayed over the full
+base and compared against the new database query, per filter: **31 cases, all exact matches** —
+every activity band, every follow-up stage, both NULL edge cases (`days_since_order` is null,
+`attempts` = 0), search by name and by phone digits, and four multi-condition presets. Then all 8
+sorts were paged end to end: **27 pages each, 1,336 distinct rows, zero duplicates and zero
+omissions**, which is what the `customer_id` tie-break exists to guarantee.
+
+**Filter state moved to the URL**, which is what lets the server know what to fetch, and makes a
+filter shareable, bookmarkable and refresh-proof. Every value is re-validated on read against the
+fixed option list that produced it, so a hand-edited URL cannot reach the query builder with
+anything the UI could not have generated; search terms are stripped of PostgREST's filter grammar
+the same way `src/lib/crm/queries.ts` does it.
+
+**Select-all survived the change.** The screen holds fifty rows, so "select all 558 matching" is
+now an explicit button that asks the server for the id column only — **77 KB, once, when pressed**,
+against 726 KB on every single page load. Ticks persist across pages, so ten rows across two pages
+is still one batch. RLS decides scope, so a rep's "all matching" is their own book.
+
+**A day-early date, everywhere on Medicine Ending.** `addDays` built a Date at midnight IST
+(18:30 UTC the day before), stepped it with `setDate()` on the *machine's* calendar, then read it
+back through `toISOString()` as a *UTC* day. Both halves disagreed, and every course end came out
+one day early — a 15-day course delivered on the 1st ended on the 15th, not the 16th — which shifted
+`days_left` and the whole "ends today / 3d left / overdue" banding with it. Now plain arithmetic on
+the instant. The same class of bug was in the Log-call dialog, where the suggested next follow-up
+was a day early for any call logged before 05:30 IST.
+
+**Four copies of the outcome vocabulary became one.** The label and tone maps were duplicated
+verbatim in `rrr-table` and `customer-panel`, the dialog kept its own button list, and the server
+kept its own accepted-values Set. They had drifted: `busy` is a value the column holds, the filter
+offers and the timeline paints, but no button could produce one. One table now feeds all four, and
+the server whitelist is derived from it rather than retyped. Three `istToday()`s and five
+date/money helpers collapsed into `lib/format.ts`.
+
+**Keyboard and dialogs, per the design brief.** The grid had no keyboard navigation at all despite
+"keyboard first" being a stated requirement; it now uses the same bindings as `DataGrid`
+(`j`/`k`, `Enter`, `e`, `Space`, `/`, cascading `Escape`) rather than a second scheme. Both dialogs
+claimed `aria-modal="true"` while Escape did nothing, Tab walked out into the table behind them and
+closing dropped focus at the top of the document; all three are fixed in one hook.
+
+**A latent bug found while reviewing, not yet reachable.** The AI tab computed a page count but
+never sliced, so a day larger than one page would have rendered every row while the pager claimed
+two. Today's cap is 45 so it fits — but the day is the sum of `users.daily_lead_cap`, and a fourth
+rep takes it to 60. Sliced now.
+
+**Left alone deliberately.** The Log-call dialog stays Hinglish. PROJECT.md D-053 makes the app
+English throughout and this is the one screen still out of step, but it is the floor's own form
+vocabulary on the screen they use all day — a change for the team to make, not a side effect of a
+refactor. Medicine Ending still filters its window in the browser: its "all" option genuinely means
+all, and the whole set is 130 rows / 41.6 KB, so bounding it by date would narrow a user-facing
+filter to buy back nothing.
+
+**Not verified:** the rendered page itself. The dev login picker (`KAMOUR_ID_PICKER`,
+`SEED_TEMP_PASSWORD`) is not configured locally, so every route 307s to `/login` before the page
+body runs, and signing in would have meant creating or repointing a real user in a live CRM. Types,
+production build and the entire data layer are verified against the live database; the React render
+path is not.

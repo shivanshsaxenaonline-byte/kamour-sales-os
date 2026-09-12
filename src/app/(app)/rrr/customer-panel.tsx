@@ -2,28 +2,9 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { loadCustomerHistory, type OrderRow, type CallRow } from './customer-actions';
-
-const money = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN');
-const day = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-
-const OUTCOME_LABEL: Record<string, string> = {
-  order_placed: 'Order placed',
-  will_buy: 'Interested',
-  not_interested: 'Not interested',
-  no_answer: 'Call not picked',
-  busy: 'Busy',
-  wrong_number: 'Wrong number',
-  connected: 'Baat hui',
-  medicine_not_finished: 'Medicine not finished',
-  will_update_later: 'Will update later',
-};
-const OUTCOME_TONE: Record<string, string> = {
-  order_placed: 'positive', will_buy: 'positive', connected: 'positive',
-  medicine_not_finished: 'attention', will_update_later: 'attention',
-  no_answer: 'attention', busy: 'attention',
-  not_interested: 'critical', wrong_number: 'critical',
-};
+import { dayLong as day, money } from './lib/format';
+import { outcomeLabel, outcomeTone } from './lib/outcomes';
+import { useModal } from './lib/use-modal';
 
 /** The date a row actually sits at on the timeline: when the call happened,
  *  or when it is due if it has not happened yet. Ordering and the gaps between
@@ -43,8 +24,8 @@ function entryState(c: CallRow) {
   if (!c.completed_at) return { label: 'Pending', tone: 'dashed', done: false };
   if (!c.outcome) return { label: 'No outcome recorded', tone: 'neutral', done: true };
   return {
-    label: OUTCOME_LABEL[c.outcome] ?? c.outcome,
-    tone: OUTCOME_TONE[c.outcome] ?? 'neutral',
+    label: outcomeLabel(c.outcome) ?? c.outcome,
+    tone: outcomeTone(c.outcome),
     done: true,
   };
 }
@@ -87,6 +68,9 @@ export function CustomerPanel({
 }) {
   const [data, setData] = useState<{ orders: OrderRow[]; calls: CallRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Escape, a focus trap and a click on the backdrop — none of which this
+  // aria-modal dialog had.
+  const { ref, onBackdropClick } = useModal(onClose);
 
   useEffect(() => {
     let live = true;
@@ -118,8 +102,8 @@ export function CustomerPanel({
   const pending = calls.length - done;
 
   return (
-    <div className="rrr-dialog" role="dialog" aria-modal="true" aria-label={`${name} details`}>
-      <div className="rrr-panel">
+    <div className="rrr-dialog" onMouseDown={onBackdropClick}>
+      <div className="rrr-panel" ref={ref} role="dialog" aria-modal="true" aria-label={`${name} details`} tabIndex={-1}>
         <header className="rrr-panel-head">
           <div>
             <h2 className="record-name">{name}</h2>

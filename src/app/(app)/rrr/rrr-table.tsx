@@ -1,11 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState, useTransition } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { assignRrr } from './actions';
 import { refreshAiLeads } from './ai-leads-actions';
+import { resolveMatchingIds } from './select-all-action';
 import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
 import { CustomerPanel } from './customer-panel';
+import { dayShort, digitsOf, initials, money, timeLabel } from './lib/format';
+import { outcomeLabel, outcomeTone } from './lib/outcomes';
+import {
+  ACTIVITIES, DND_OPTIONS, NO_FILTERS, OUTCOME_OPTIONS, PAYMENTS, PRESETS, SORTS, STAGES, TYPES,
+  activeCount as countActive, shapeOf, toQueryString, type Filters,
+} from './lib/filters';
 
 export type RrrRow = {
   customer_id: string;
@@ -47,24 +55,6 @@ export type AiRun = { run_on: string; generated_at: string; total: number };
 
 export type Rep = { id: string; full_name: string; role: string };
 
-const OUTCOME_LABEL: Record<string, string> = {
-  order_placed: 'Order placed',
-  will_buy: 'Interested',
-  not_interested: 'Not interested',
-  no_answer: 'Call not picked',
-  busy: 'Busy',
-  wrong_number: 'Wrong number',
-  connected: 'Baat hui',
-  medicine_not_finished: 'Medicine not finished',
-  will_update_later: 'Will update later',
-};
-const OUTCOME_TONE: Record<string, string> = {
-  order_placed: 'positive', will_buy: 'positive', connected: 'positive',
-  medicine_not_finished: 'attention', will_update_later: 'attention',
-  no_answer: 'attention', busy: 'attention',
-  not_interested: 'critical', wrong_number: 'critical',
-};
-
 // The five buckets migration 028 seeds into ai_lead_rules. The label comes
 // from the database (bucket_label) so a renamed rule needs no deploy; only the
 // colour lives here, because a colour is a UI decision.
@@ -83,17 +73,6 @@ const BUCKET_TONE: Record<string, string> = {
   dormant: 'neutral',
 };
 
-// 1,300 rows in one <table> is a slow, unscrollable page. Fifty at a time,
-// the same size the team's existing workspace uses. The AI list is 45, so it
-// lands on one page and the pager hides itself.
-const PAGE_SIZE = 50;
-
-const money = (n: number | null) =>
-  n == null ? '—' : '₹' + Math.round(n).toLocaleString('en-IN');
-
-const initials = (name: string) =>
-  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '?';
-
 /** Active if they bought within 90 days — the same line the team's own
  *  dashboard draws between a live customer and one going cold, and the same
  *  line the lead generator's `active` bucket uses. */
@@ -103,195 +82,171 @@ function activity(days: number | null) {
   return { text: `${days}d inactive`, tone: days > 180 ? 'critical' : 'attention' };
 }
 
-/** What the follow-up state means today, not what it meant when it was set. */
-function followUpState(r: RrrRow) {
+/** What the follow-up state means today, not what it meant when it was set.
+ *  `today` comes from the server so the pill and the Overdue filter can never
+ *  disagree about which day it is. */
+function followUpState(r: RrrRow, today: string) {
   if (r.next_due_on) {
     const days = Math.round(
-      (Date.now() - new Date(`${r.next_due_on}T00:00:00+05:30`).getTime()) / 86_400_000);
-    const last = r.last_outcome ? OUTCOME_LABEL[r.last_outcome] ?? r.last_outcome : '';
+      (new Date(`${today}T00:00:00+05:30`).getTime()
+        - new Date(`${r.next_due_on}T00:00:00+05:30`).getTime()) / 86_400_000);
+    const last = outcomeLabel(r.last_outcome) ?? '';
     if (days > 0) return { text: last ? `${last} · ${days}d overdue` : `${days}d overdue`, tone: 'critical' };
     if (days === 0) return { text: 'Due today', tone: 'attention' };
     return { text: `Call in ${Math.abs(days)}d`, tone: 'neutral' };
   }
   if (r.last_outcome)
-    return {
-      text: OUTCOME_LABEL[r.last_outcome] ?? r.last_outcome,
-      tone: OUTCOME_TONE[r.last_outcome] ?? 'neutral',
-    };
+    return { text: outcomeLabel(r.last_outcome) ?? r.last_outcome, tone: outcomeTone(r.last_outcome) };
   return { text: 'Untouched', tone: 'dashed' };
 }
 
-const dayLabel = (iso: string) =>
-  new Date(`${iso}T00:00:00+05:30`).toLocaleDateString('en-IN',
-    { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
-
-const timeLabel = (iso: string) =>
-  new Date(iso).toLocaleTimeString('en-IN',
-    { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
-
-/** Every condition the All-customers filter panel can hold. All of them are
- *  strings — including the two numeric boxes — because that is what an
- *  <input> and a <select> hand back, and parsing once at filter time beats
- *  carrying a half-typed "12" around as NaN. */
-type Filters = {
-  search: string;
-  type: string;
-  payment: string;
-  activity: string;
-  stage: string;
-  outcome: string;
-  owner: string;
-  dnd: string;
-  minOrders: string;
-  minValue: string;
-  sort: string;
-};
-
-const NO_FILTERS: Filters = {
-  search: '', type: 'all', payment: 'all', activity: 'all', stage: 'all',
-  outcome: 'all', owner: 'all', dnd: 'all', minOrders: '', minValue: '',
-  // Not "highest value first": the list arrives unassigned-first from the
-  // server, which is the order the work is handed out in, and a default sort
-  // here would silently throw that away.
-  sort: 'queue',
-};
-
-const TYPES = [
-  { value: 'all', label: 'All' },
-  { value: 'new', label: 'New' },
-  { value: 'repeat', label: 'Repeat' },
-];
-
-// The three profiles v_rrr_queue computes (027). Matched by label, because
-// that is what the view returns and what the Payment column already shows.
-const PAYMENTS = [
-  { value: 'all', label: 'All payment types' },
-  { value: 'Prepaid only', label: 'Prepaid only' },
-  { value: 'COD only', label: 'COD only' },
-  { value: 'Mixed', label: 'Mixed' },
-];
-
-// The same bands the Activity pill paints, so a filter and the column it
-// filters on can never disagree.
-const ACTIVITIES = [
-  { value: 'all', label: 'All activity stages' },
-  { value: 'active', label: 'Active · ordered within 90d' },
-  // Both halves of "gone quiet" as one option, because that is the line the
-  // screen drew before this panel existed and the floor still asks for it.
-  { value: 'inactive', label: 'Inactive · 90d+' },
-  { value: 'cooling', label: 'Cooling · 91–180d' },
-  { value: 'dormant', label: 'Inactive · 180d+' },
-  { value: 'never', label: 'No orders on record' },
-];
-
-const STAGES = [
-  { value: 'all', label: 'All follow-up stages' },
-  { value: 'untouched', label: 'Untouched — never called' },
-  { value: 'overdue', label: 'Overdue' },
-  { value: 'today', label: 'Due today' },
-  { value: 'upcoming', label: 'Scheduled later' },
-  { value: 'closed', label: 'Called, nothing scheduled' },
-];
-
-const DND_OPTIONS = [
-  { value: 'all', label: 'Include DND' },
-  { value: 'exclude', label: 'Hide DND' },
-  { value: 'only', label: 'DND only' },
-];
-
-const SORTS = [
-  { value: 'queue', label: 'Unassigned first (default)' },
-  { value: 'value', label: 'Highest amount first' },
-  { value: 'orders', label: 'Most orders first' },
-  { value: 'aov', label: 'Highest AOV first' },
-  { value: 'recent', label: 'Most recent order first' },
-  { value: 'stale', label: 'Longest inactive first' },
-  { value: 'due', label: 'Follow-up due soonest' },
-  { value: 'name', label: 'Name A–Z' },
-];
-
-const COMPARE: Record<string, (a: RrrRow, b: RrrRow) => number> = {
-  value: (a, b) => b.lifetime_value - a.lifetime_value,
-  orders: (a, b) => b.lifetime_orders - a.lifetime_orders,
-  aov: (a, b) => (b.aov ?? 0) - (a.aov ?? 0),
-  // Never-ordered sorts last either way, rather than pretending to be day 0.
-  recent: (a, b) => (a.days_since_order ?? Infinity) - (b.days_since_order ?? Infinity),
-  stale: (a, b) => (b.days_since_order ?? -1) - (a.days_since_order ?? -1),
-  due: (a, b) => (a.next_due_on ?? '9999-12-31').localeCompare(b.next_due_on ?? '9999-12-31'),
-  name: (a, b) => a.full_name.localeCompare(b.full_name),
-};
-
-/** The questions the floor actually opens this screen with, one click each.
- *  Anything a preset does not set goes back to its default, so a chip is a
- *  whole answer and not a layer on top of whatever was left over. */
-const PRESETS: { id: string; label: string; patch: Partial<Filters> }[] = [
-  { id: 'spenders', label: 'Highest spenders', patch: { sort: 'value' } },
-  { id: 'orders', label: 'Most orders', patch: { sort: 'orders' } },
-  { id: 'prepaid', label: 'Prepaid repeat', patch: { type: 'repeat', payment: 'Prepaid only', sort: 'value' } },
-  { id: 'cold', label: 'Inactive high-value', patch: { activity: 'dormant', minValue: '20000', sort: 'value' } },
-  { id: 'untouched', label: 'Never called', patch: { stage: 'untouched', sort: 'value' } },
-  { id: 'overdue', label: 'Overdue follow-ups', patch: { stage: 'overdue', sort: 'due' } },
-];
-
-/** Today on the sales floor. Read per filter pass rather than once at import,
- *  so a screen left open overnight does not keep yesterday's idea of
- *  "overdue" — the same reason RrrScreen has its own istToday(). */
-const istToday = () => new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
-
-function activityBand(days: number | null) {
-  if (days == null) return 'never';
-  if (days <= 90) return 'active';
-  if (days <= 180) return 'cooling';
-  return 'dormant';
-}
-
-/** Where this customer sits in the follow-up cycle — the state the Follow-up
- *  column already reads, reduced to the one word a filter can match. */
-function followUpStage(r: RrrRow, today: string) {
-  if (r.next_due_on) {
-    if (r.next_due_on < today) return 'overdue';
-    if (r.next_due_on === today) return 'today';
-    return 'upcoming';
-  }
-  return (r.attempts ?? 0) > 0 ? 'closed' : 'untouched';
-}
-
-/** Two filter sets ask the same question when everything except who you are
- *  searching for and whose book you are in matches. Used to light up the
- *  preset chip you are currently standing on. */
-const shapeOf = (f: Filters) => JSON.stringify(
-  [f.type, f.payment, f.activity, f.stage, f.outcome, f.dnd, f.minOrders, f.minValue, f.sort]);
+const TYPING = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 
 export function RrrTable({
-  mode, rows, aiLeads, counts, aiRun, reps, canAssign, numbers,
+  mode, rows, aiLeads, filters, page, pageSize, matched, counts, aiRun, reps, canAssign, numbers, today,
 }: {
   mode: 'all' | 'ai';
   rows: RrrRow[];
   aiLeads: AiLeadRow[];
+  filters: Filters;
+  page: number;
+  pageSize: number;
+  matched: number;
   counts: { all: number; ai: number };
   aiRun: AiRun | null;
   reps: Rep[];
   canAssign: boolean;
   numbers: ContactNumber[];
+  today: string;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // One object, not eleven useStates: a preset sets six of them at once, and
-  // "clear" has to put every one of them back without listing them again.
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [panelOpen, setPanelOpen] = useState(true);
   const [showMore, setShowMore] = useState(false);
-  const [bucket, setBucket] = useState('all');
   const [target, setTarget] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [refreshing, startRefresh] = useTransition();
+  const [navigating, startNav] = useTransition();
+  const [selectingAll, startSelectAll] = useTransition();
   const [openRow, setOpenRow] = useState<RrrRow | null>(null);
   const [calling, setCalling] = useState<CallTarget | null>(null);
-  const [page, setPage] = useState(1);
+  /** Which row the keyboard is on. -1 = nothing focused yet. */
+  const [cursor, setCursor] = useState(-1);
 
-  // Which list you are on is now the URL, not component state, so the sidebar
-  // can link straight to it and the browser's own back button works.
+  const searchInput = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+
+  // Which list you are on is the URL, not component state, so the sidebar can
+  // link straight to it and the browser's own back button works.
   const isAi = mode === 'ai';
+
+  // ---- filter state lives in the URL -------------------------------------
+  // The server reads it to decide what to fetch, so a filter change is a
+  // navigation. push() for discrete choices, so the back button steps back
+  // through them; replace() while typing, so one search does not bury the
+  // history under thirty entries.
+  const go = useCallback((next: Filters, nextPage: number, replace = false) => {
+    const url = pathname + toQueryString(next, nextPage);
+    startNav(() => { if (replace) router.replace(url, { scroll: false }); else router.push(url, { scroll: false }); });
+  }, [pathname, router]);
+
+  const setFilter = useCallback((key: keyof Filters, value: string) => {
+    // Page 3 of a list that just became 40 rows long is a blank screen.
+    go({ ...filters, [key]: value }, 1);
+  }, [filters, go]);
+
+  // The search box is typed into, so it keeps a local value and pushes to the
+  // URL once typing settles. Without the debounce every keystroke would be a
+  // round trip; without the local value the input would lag a frame behind the
+  // key that was pressed.
+  const [searchDraft, setSearchDraft] = useState(filters.search);
+  const committed = useRef(filters.search);
+  useEffect(() => {
+    // The URL changed from somewhere else (back button, preset, Clear) — take
+    // its value rather than overwriting it with a stale draft.
+    if (filters.search !== committed.current) {
+      committed.current = filters.search;
+      setSearchDraft(filters.search);
+    }
+  }, [filters.search]);
+  useEffect(() => {
+    if (searchDraft === committed.current) return;
+    const id = setTimeout(() => {
+      committed.current = searchDraft;
+      go({ ...filters, search: searchDraft }, 1, true);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [searchDraft, filters, go]);
+
+  function applyPreset(patch: Partial<Filters>) {
+    const wanted = { ...NO_FILTERS, ...patch };
+    go({
+      // Clicking the chip you are already standing on takes it off again.
+      ...(shapeOf(filters) === shapeOf(wanted) ? NO_FILTERS : wanted),
+      // Who you are searching for and whose book you are in survive a preset:
+      // a rep filtered to their own customers stays in their own customers.
+      search: filters.search,
+      owner: filters.owner,
+      bucket: filters.bucket,
+    }, 1);
+  }
+
+  function clearFilters() {
+    go({ ...NO_FILTERS, sort: filters.sort }, 1);
+  }
+
+  const activeCount = useMemo(() => countActive(filters), [filters]);
+  const shape = useMemo(() => shapeOf(filters), [filters]);
+
+  // ---- what is on screen -------------------------------------------------
+  // On the All tab the server already filtered, sorted and paged, so `rows` IS
+  // the page. On the AI tab the whole day is in hand (45 rows at the current
+  // cap) and the generator's ranking is the product — it is never re-sorted,
+  // only narrowed.
+  const filtered = useMemo(() => {
+    if (!isAi) return rows;
+    const q = filters.search.trim().toLowerCase();
+    const digits = digitsOf(q);
+    return aiLeads.filter((a) => {
+      // In this list "owner" means who is calling them TODAY, not who owns the
+      // customer — that is the whole point of the daily deal.
+      if (filters.owner === 'unassigned' && a.ai_owner_id) return false;
+      if (filters.owner !== 'all' && filters.owner !== 'unassigned' && a.ai_owner_id !== filters.owner) return false;
+      if (filters.bucket !== 'all' && a.bucket !== filters.bucket) return false;
+      if (q) {
+        const byName = a.full_name.toLowerCase().includes(q);
+        const byPhone = digits.length > 0 && digitsOf(a.phone_e164).includes(digits);
+        if (!byName && !byPhone) return false;
+      }
+      return true;
+    });
+  }, [isAi, rows, aiLeads, filters.search, filters.owner, filters.bucket]);
+
+  const total = isAi ? filtered.length : matched;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const firstShown = (page - 1) * pageSize + 1;
+
+  // The rows actually on screen.
+  //
+  // On the All tab the server already sliced, so `rows` IS the page. On the AI
+  // tab the whole day is in hand and the slice happens here — it has to, or a
+  // day bigger than one page would render every row while the pager claimed
+  // there were two. Today's cap is 45 so it fits, but the day is the sum of
+  // users.daily_lead_cap: a fourth rep takes it to 60 and past the page size.
+  const shown = useMemo(
+    () => (isAi ? filtered.slice((page - 1) * pageSize, page * pageSize) : filtered),
+    [isAi, filtered, page, pageSize]);
+
+  // A filter can narrow the list while you are on page 6. On the All tab the
+  // server has no count until it has run the query, so the correction happens
+  // here either way: step to the last page that exists rather than showing a
+  // blank one that reads as "no results".
+  useEffect(() => {
+    if (page > pageCount && total > 0) go(filters, pageCount);
+  }, [page, pageCount, total, filters, go]);
 
   // The buckets actually present in today's list, labelled by the database.
   // Built from the rows rather than hard-coded so a new rule shows up on its
@@ -302,105 +257,20 @@ export function RrrTable({
     return [...seen].map(([code, label]) => ({ code, label }));
   }, [aiLeads]);
 
-  const visible = useMemo(() => {
-    const source: RrrRow[] = isAi ? aiLeads : rows;
-    const { search, owner } = filters;
-    const q = search.trim().toLowerCase();
-    // Digits only, so "+91 99458" and "99458" find the same customer.
-    const digits = q.replace(/\D/g, '');
-    const minOrders = filters.minOrders === '' ? null : Number(filters.minOrders);
-    const minValue = filters.minValue === '' ? null : Number(filters.minValue);
-    const today = istToday();
+  // ---- selection ---------------------------------------------------------
+  // Selection survives paging: the Set is component state and the page is a
+  // navigation, so ticking six rows on page 1 and four on page 2 is one batch
+  // of ten. The header checkbox covers this page; everything the filter matched
+  // is a separate, explicit action, because it is the one that can move 500
+  // customers and should never happen by reflex.
+  const pageIds = useMemo(() => shown.map((r) => r.customer_id), [shown]);
+  const selectedOnPage = useMemo(
+    () => pageIds.reduce((n, id) => n + (selected.has(id) ? 1 : 0), 0), [pageIds, selected]);
+  const allOnPage = pageIds.length > 0 && selectedOnPage === pageIds.length;
+  const someOnPage = selectedOnPage > 0 && !allOnPage;
 
-    const kept = source.filter((r) => {
-      if (isAi) {
-        const a = r as AiLeadRow;
-        // In this list "owner" means who is calling them TODAY, not who owns
-        // the customer — that is the whole point of the daily deal.
-        if (owner === 'unassigned' && a.ai_owner_id) return false;
-        if (owner !== 'all' && owner !== 'unassigned' && a.ai_owner_id !== owner) return false;
-        if (bucket !== 'all' && a.bucket !== bucket) return false;
-      } else {
-        if (owner === 'unassigned' && r.current_owner_id) return false;
-        if (owner !== 'all' && owner !== 'unassigned' && r.current_owner_id !== owner) return false;
-        if (filters.type === 'new' && r.is_repeat_buyer) return false;
-        if (filters.type === 'repeat' && !r.is_repeat_buyer) return false;
-        if (filters.payment !== 'all' && r.payment_profile !== filters.payment) return false;
-        if (filters.activity !== 'all') {
-          const band = activityBand(r.days_since_order);
-          if (filters.activity === 'inactive') {
-            if (band === 'active' || band === 'never') return false;
-          } else if (band !== filters.activity) return false;
-        }
-        if (filters.stage !== 'all' && followUpStage(r, today) !== filters.stage) return false;
-        if (filters.outcome !== 'all' && r.last_outcome !== filters.outcome) return false;
-        if (filters.dnd === 'exclude' && r.is_dnd) return false;
-        if (filters.dnd === 'only' && !r.is_dnd) return false;
-        if (minOrders != null && r.lifetime_orders < minOrders) return false;
-        if (minValue != null && r.lifetime_value < minValue) return false;
-      }
-      if (q) {
-        const byName = r.full_name.toLowerCase().includes(q);
-        const byPhone = digits.length > 0 && r.phone_e164.replace(/\D/g, '').includes(digits);
-        if (!byName && !byPhone) return false;
-      }
-      return true;
-    });
-
-    // The AI list is already in the order the generator ranked it, and that
-    // ranking is the product — it does not get re-sorted here.
-    const compare = isAi ? null : COMPARE[filters.sort];
-    return compare ? [...kept].sort(compare) : kept;
-  }, [isAi, rows, aiLeads, filters, bucket]);
-
-  /** How many conditions are narrowing the list right now. Sort is not one of
-   *  them — it changes the order, never the count — so it is deliberately not
-   *  counted, or the badge would read "1 active" on an unfiltered screen. */
-  const activeCount = useMemo(() => {
-    let n = filters.search.trim() ? 1 : 0;
-    for (const k of ['type', 'payment', 'activity', 'stage', 'outcome', 'owner', 'dnd'] as const) {
-      if (filters[k] !== NO_FILTERS[k]) n++;
-    }
-    if (filters.minOrders !== '') n++;
-    if (filters.minValue !== '') n++;
-    return n;
-  }, [filters]);
-
-  const shape = shapeOf(filters);
-
-  function setFilter(key: keyof Filters, value: string) {
-    setFilters((f) => ({ ...f, [key]: value }));
-    // Page 3 of a list that just became 40 rows long is a blank screen.
-    setPage(1);
-  }
-
-  function applyPreset(patch: Partial<Filters>) {
-    const wanted = { ...NO_FILTERS, ...patch };
-    setFilters((f) => ({
-      // Clicking the chip you are already standing on takes it off again.
-      ...(shapeOf(f) === shapeOf(wanted) ? NO_FILTERS : wanted),
-      // Who you are searching for and whose book you are in survive a preset:
-      // a rep filtered to their own customers stays in their own customers.
-      search: f.search,
-      owner: f.owner,
-    }));
-    setPage(1);
-  }
-
-  function clearFilters() {
-    setFilters(NO_FILTERS);
-    setPage(1);
-  }
-
-  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
-  // A filter change can leave you past the end; clamp rather than showing a
-  // blank page that looks like "no results".
-  const current = Math.min(page, pageCount);
-  const shown = visible.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-
-  // "Select all" means every row the filter matched, not just this page —
-  // otherwise assigning 300 customers would take six clicks through pages.
-  const allShown = visible.length > 0 && visible.every((r) => selected.has(r.customer_id));
+  const headBox = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (headBox.current) headBox.current.indeterminate = someOnPage; }, [someOnPage]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -409,15 +279,32 @@ export function RrrTable({
       return next;
     });
   }
-  function toggleAllShown() {
+
+  function togglePage() {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (allShown) for (const r of visible) next.delete(r.customer_id);
-      else for (const r of visible) next.add(r.customer_id);
+      if (allOnPage) for (const id of pageIds) next.delete(id);
+      else for (const id of pageIds) next.add(id);
       return next;
     });
   }
 
+  function selectAllMatching() {
+    setMessage(null);
+    startSelectAll(async () => {
+      // The browser holds fifty rows, so the ids for the other 1,286 have to be
+      // asked for. Id column only — see resolveMatchingIds.
+      const params = Object.fromEntries(new URLSearchParams(toQueryString(filters, 1)));
+      const result = await resolveMatchingIds(params);
+      if (!result.ok) { setMessage(result.error); return; }
+      setSelected(new Set(result.ids));
+      setMessage(`${result.ids.length.toLocaleString('en-IN')} customers selected.`);
+    });
+  }
+
+  const clearSelection = () => { setSelected(new Set()); setMessage(null); };
+
+  // ---- actions -----------------------------------------------------------
   function submit() {
     if (!selected.size || !target) return;
     const ids = [...selected];
@@ -432,6 +319,8 @@ export function RrrTable({
       setMessage(result.moved === 0
         ? `Nothing changed — those ${ids.length} were already on ${toName}.`
         : `${result.moved} of ${ids.length} moved to ${toName}.`);
+      // The rows on screen now say the wrong owner; the server has the new one.
+      router.refresh();
     });
   }
 
@@ -439,37 +328,118 @@ export function RrrTable({
     setMessage(null);
     startRefresh(async () => {
       const result = await refreshAiLeads();
-      setMessage(result.ok
-        ? `Today's list rebuilt — ${result.total} leads.`
-        : result.error);
+      setMessage(result.ok ? `Today's list rebuilt — ${result.total} leads.` : result.error);
+      if (result.ok) router.refresh();
     });
   }
 
-  const callTargetFor = (r: RrrRow): CallTarget => ({
+  const callTargetFor = useCallback((r: RrrRow): CallTarget => ({
     customerId: r.customer_id,
     name: r.full_name,
     phone: r.phone_e164,
     followupId: r.open_followup_id,
     orderId: r.last_order_id,
-  });
+  }), []);
+
+  // ---- keyboard ----------------------------------------------------------
+  // "Keyboard first: j/k row nav, Enter open, e edit, / search, Esc close" is
+  // the design brief, and this grid had none of it. Esc inside the dialogs is
+  // handled by useModal, which is why this listener stands down while one is
+  // open rather than competing with it.
+  const dialogOpen = !!openRow || !!calling;
+  useEffect(() => {
+    if (dialogOpen) return;
+
+    function onKey(event: KeyboardEvent) {
+      const el = event.target as HTMLElement | null;
+      const typing = !!el && (TYPING.has(el.tagName) || el.isContentEditable);
+
+      if (event.key === '/' && !typing) {
+        event.preventDefault();
+        // On the All tab the search box lives in the filter panel, so a
+        // collapsed panel has nothing to focus — open it and focus once it is
+        // on screen, rather than swallowing the keystroke.
+        if (!isAi && !panelOpen) {
+          setPanelOpen(true);
+          requestAnimationFrame(() => {
+            searchInput.current?.focus();
+            searchInput.current?.select();
+          });
+          return;
+        }
+        searchInput.current?.focus();
+        searchInput.current?.select();
+        return;
+      }
+      if (typing) {
+        // Escape gives the keyboard back to the grid from any field.
+        if (event.key === 'Escape') el?.blur();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Escape unwinds one layer at a time, the same order DataGrid uses:
+      // a selection first, then the keyboard cursor.
+      if (event.key === 'Escape') {
+        if (selected.size) clearSelection();
+        else setCursor(-1);
+        return;
+      }
+
+      const last = shown.length - 1;
+      if (last < 0) return;
+
+      // A key pressed with a button or link focused belongs to that control.
+      const onControl = !!el?.closest('button,a');
+      const row = shown[cursor];
+
+      switch (event.key) {
+        case 'j': case 'ArrowDown':
+          event.preventDefault();
+          setCursor((c) => Math.min(c < 0 ? 0 : c + 1, last));
+          break;
+        case 'k': case 'ArrowUp':
+          event.preventDefault();
+          setCursor((c) => Math.max(c < 0 ? 0 : c - 1, 0));
+          break;
+        case 'Enter':
+          if (row && !onControl) { event.preventDefault(); setOpenRow(row); }
+          break;
+        case 'e': case 'E':
+          if (row) { event.preventDefault(); setCalling(callTargetFor(row)); }
+          break;
+        case ' ':
+          if (row && canAssign && !onControl) { event.preventDefault(); toggle(row.customer_id); }
+          break;
+      }
+    }
+
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [dialogOpen, shown, cursor, canAssign, callTargetFor, isAi, panelOpen, selected.size]);
+
+  // A cursor past the end of a freshly-filtered page points at nothing.
+  useEffect(() => { setCursor((c) => (c > shown.length - 1 ? -1 : c)); }, [shown.length]);
+
+  // Keep the keyboard row in view without yanking the page around.
+  useEffect(() => {
+    if (cursor < 0) return;
+    bodyRef.current?.children[cursor]?.scrollIntoView({ block: 'nearest' });
+  }, [cursor]);
+
+  const busy = navigating || pending;
 
   return (
-    <section className="data-grid">
+    <section className="data-grid" aria-busy={busy}>
       <div className="grid-toolbar">
         <h1>RRR</h1>
 
         {/* Tabs, not a dropdown. This is WHICH LIST you are looking at, which
             is the same choice Leads, Consultation and Orders all make with
-            tabs — and as a select it sat two controls away from the stage
-            filter whose first option also read "All customers", so the two
-            were indistinguishable and the AI list looked like it was missing.
-            The counts are the other half of the fix: a tab reading 0 says the
-            list has not been generated, where an unopened dropdown said
-            nothing at all. */}
-        {/* Links, not buttons: each list is its own URL, so these are the same
-            navigation the sidebar performs and behave like it — bookmarkable,
-            back-button-able, and highlighted by the route rather than by
-            state the sidebar cannot see. */}
+            tabs. Links, not buttons: each list is its own URL, so these are the
+            same navigation the sidebar performs and behave like it —
+            bookmarkable, back-button-able, and highlighted by the route rather
+            than by state the sidebar cannot see. */}
         <div className="module-tabs">
           <Link href="/rrr" className={isAi ? '' : 'active'} aria-current={isAi ? undefined : 'page'}>
             All customers<span>{counts.all.toLocaleString('en-IN')}</span>
@@ -479,11 +449,11 @@ export function RrrTable({
           </Link>
         </div>
 
-        <span className="muted">
-          {visible.length
-            ? `Showing ${(current - 1) * PAGE_SIZE + 1}–${Math.min(current * PAGE_SIZE, visible.length)} of ${visible.length.toLocaleString('en-IN')}`
+        <span className="muted" aria-live="polite">
+          {total
+            ? `Showing ${firstShown}–${Math.min(page * pageSize, total)} of ${total.toLocaleString('en-IN')}`
             : '0 customers'}
-          {selected.size ? ` · ${selected.size} selected` : ''}
+          {selected.size ? ` · ${selected.size.toLocaleString('en-IN')} selected` : ''}
         </span>
 
         {/* Up here rather than in the assign bar, which only oversight roles
@@ -493,22 +463,23 @@ export function RrrTable({
         <div className="toolbar-spacer" />
 
         {/* On the AI list the controls stay in the toolbar: 45 rows need a
-            search box and two dropdowns, not a panel. The All-customers list
-            is 1,336 rows and gets the panel below. */}
+            search box and two dropdowns, not a panel. The All-customers list is
+            1,336 rows and gets the panel below. */}
         {isAi ? (
           <>
             <label className="grid-search">
               <span className="sr-only">Search customer</span>
               <input
+                ref={searchInput}
                 type="search"
-                value={filters.search}
-                placeholder="Name or mobile number…"
-                onChange={(e) => setFilter('search', e.target.value)}
+                value={searchDraft}
+                placeholder="Name or mobile number…   /"
+                onChange={(e) => setSearchDraft(e.target.value)}
               />
             </label>
 
             <label className="sr-only" htmlFor="rrr-bucket">Why it was picked</label>
-            <select id="rrr-bucket" value={bucket} onChange={(e) => { setBucket(e.target.value); setPage(1); }}>
+            <select id="rrr-bucket" value={filters.bucket} onChange={(e) => setFilter('bucket', e.target.value)}>
               <option value="all">All reasons</option>
               {buckets.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}
             </select>
@@ -538,9 +509,9 @@ export function RrrTable({
           into the toolbar. The floor's question is never "show me everyone" —
           it is "prepaid repeat buyers worth ₹20k nobody has called yet", which
           is four conditions at once. Labelled fields in a grid, the six
-          questions that get asked daily as one-click chips above them, the
-          rare ones folded behind "More filters", and a count of what is on, so
-          a surprising row total is never a mystery. */}
+          questions that get asked daily as one-click chips above them, the rare
+          ones folded behind "More filters", and a count of what is on, so a
+          surprising row total is never a mystery. */}
       {!isAi && panelOpen ? (
         <div className="rrr-filters" id="rrr-filters">
           <div className="rrr-filters-head">
@@ -573,10 +544,11 @@ export function RrrTable({
             <label className="rrr-field wide">
               <span>Search customer</span>
               <input
+                ref={searchInput}
                 type="search"
-                value={filters.search}
-                placeholder="Name or mobile number…"
-                onChange={(e) => setFilter('search', e.target.value)}
+                value={searchDraft}
+                placeholder="Name or mobile number…   press / to jump here"
+                onChange={(e) => setSearchDraft(e.target.value)}
               />
             </label>
 
@@ -641,14 +613,11 @@ export function RrrTable({
             <div className="rrr-filter-grid">
               <label className="rrr-field">
                 <span>Last call outcome</span>
+                {/* Straight from the outcome vocabulary the Log-call dialog
+                    writes, so the filter can never list one the floor cannot
+                    record — nor miss one the data holds. */}
                 <select value={filters.outcome} onChange={(e) => setFilter('outcome', e.target.value)}>
-                  <option value="all">Any outcome</option>
-                  {/* Straight from the outcome vocabulary the Log-call dialog
-                      writes, so the filter can never list one the floor
-                      cannot record. */}
-                  {Object.entries(OUTCOME_LABEL).map(([code, label]) => (
-                    <option key={code} value={code}>{label}</option>
-                  ))}
+                  {OUTCOME_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </label>
 
@@ -660,7 +629,7 @@ export function RrrTable({
                   inputMode="numeric"
                   value={filters.minOrders}
                   placeholder="Any"
-                  onChange={(e) => setFilter('minOrders', e.target.value)}
+                  onChange={(e) => setFilter('minOrders', e.target.value.replace(/\D/g, ''))}
                 />
               </label>
 
@@ -673,7 +642,7 @@ export function RrrTable({
                   inputMode="numeric"
                   value={filters.minValue}
                   placeholder="Any"
-                  onChange={(e) => setFilter('minValue', e.target.value)}
+                  onChange={(e) => setFilter('minValue', e.target.value.replace(/\D/g, ''))}
                 />
               </label>
 
@@ -694,7 +663,7 @@ export function RrrTable({
               Clear filters
             </button>
             <span className="muted">
-              {visible.length.toLocaleString('en-IN')} of {rows.length.toLocaleString('en-IN')} customers match
+              {total.toLocaleString('en-IN')} of {counts.all.toLocaleString('en-IN')} customers match
             </span>
           </div>
         </div>
@@ -704,7 +673,7 @@ export function RrrTable({
         <div className="grid-toolbar rrr-aibar">
           <span>
             {aiRun
-              ? <><strong>{aiRun.total} leads</strong> for {dayLabel(aiRun.run_on)}, dealt evenly across the floor</>
+              ? <><strong>{aiRun.total} leads</strong> for {dayShort(aiRun.run_on)}, dealt evenly across the floor</>
               : <strong>Today’s list has not been generated yet.</strong>}
           </span>
           {aiRun ? (
@@ -730,6 +699,19 @@ export function RrrTable({
           <button type="button" onClick={submit} disabled={pending || !selected.size || !target}>
             {pending ? 'Assigning…' : `Assign ${selected.size || ''}`.trim()}
           </button>
+
+          {/* Selecting beyond this page is deliberate and says its own number.
+              The screen holds fifty rows, so this asks the server which ids the
+              filter matches rather than pretending it already knows. */}
+          {!isAi && total > shown.length ? (
+            <button type="button" onClick={selectAllMatching} disabled={selectingAll || busy}>
+              {selectingAll ? 'Selecting…' : `Select all ${total.toLocaleString('en-IN')} matching`}
+            </button>
+          ) : null}
+          {selected.size ? (
+            <button type="button" onClick={clearSelection}>Clear selection</button>
+          ) : null}
+
           {isAi ? (
             <span className="muted">
               This changes who owns the customer for good — today’s AI list is only who calls them today.
@@ -744,7 +726,13 @@ export function RrrTable({
             <tr>
               {canAssign ? (
                 <th style={{ width: 32 }}>
-                  <input type="checkbox" checked={allShown} onChange={toggleAllShown} aria-label="Select all shown" />
+                  <input
+                    ref={headBox}
+                    type="checkbox"
+                    checked={allOnPage}
+                    onChange={togglePage}
+                    aria-label="Select every row on this page"
+                  />
                 </th>
               ) : null}
               {isAi ? <th className="num" style={{ width: 44 }}>#</th> : null}
@@ -759,15 +747,16 @@ export function RrrTable({
               <th />
             </tr>
           </thead>
-          <tbody>
-            {shown.map((r) => {
+          <tbody ref={bodyRef}>
+            {shown.map((r, i) => {
               const act = activity(r.days_since_order);
-              const fu = followUpState(r);
+              const fu = followUpState(r, today);
               const ai = isAi ? (r as AiLeadRow) : null;
               return (
                 <tr
                   key={r.customer_id}
-                  className={`record-row ${selected.has(r.customer_id) ? 'selected' : ''}`}
+                  className={`record-row ${selected.has(r.customer_id) ? 'selected' : ''} ${i === cursor ? 'keyboard-focused' : ''}`}
+                  onMouseDown={() => setCursor(i)}
                 >
                   {canAssign ? (
                     <td>
@@ -851,24 +840,27 @@ export function RrrTable({
           </tbody>
         </table>
 
-        {visible.length === 0 ? (
+        {shown.length === 0 ? (
           <div className="grid-empty">
             <p>
               {isAi && !aiRun
                 ? 'No AI leads for today yet. The list is built every morning at 4:30.'
                 : 'No customers match this filter.'}
             </p>
+            {!isAi && activeCount ? (
+              <p><button type="button" onClick={clearFilters}>Clear filters</button></p>
+            ) : null}
           </div>
         ) : null}
       </div>
 
       {pageCount > 1 ? (
         <footer className="grid-footer rrr-pager">
-          <button type="button" onClick={() => setPage(current - 1)} disabled={current <= 1}>
+          <button type="button" onClick={() => go(filters, page - 1)} disabled={page <= 1 || busy}>
             Previous
           </button>
-          <span className="muted">Page {current} of {pageCount}</span>
-          <button type="button" onClick={() => setPage(current + 1)} disabled={current >= pageCount}>
+          <span className="muted">Page {Math.min(page, pageCount)} of {pageCount}</span>
+          <button type="button" onClick={() => go(filters, page + 1)} disabled={page >= pageCount || busy}>
             Next
           </button>
         </footer>
@@ -889,7 +881,7 @@ export function RrrTable({
           target={calling}
           numbers={numbers}
           onClose={() => setCalling(null)}
-          onSaved={(msg) => { setCalling(null); setMessage(msg); }}
+          onSaved={(msg) => { setCalling(null); setMessage(msg); router.refresh(); }}
         />
       ) : null}
     </section>

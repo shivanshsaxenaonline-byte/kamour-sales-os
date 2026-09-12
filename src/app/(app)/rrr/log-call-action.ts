@@ -3,14 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 
-// The nine outcomes the floor's own dropdown offers, and the nine migration
-// 024 allows. `interested` is the label; the column has stored `will_buy`
-// since 005, so the two are mapped rather than renamed under the existing data.
-const OUTCOMES = new Set([
-  'order_placed', 'interested', 'not_interested', 'no_answer',
-  'busy', 'wrong_number', 'connected', 'medicine_not_finished', 'will_update_later',
-]);
-const TO_COLUMN: Record<string, string> = { interested: 'will_buy' };
+// What the dialog may post, and what each value stores. Derived from the single
+// outcome table rather than retyped here: this whitelist and the dialog's
+// buttons used to be two hand-maintained lists, and they had already drifted
+// apart over `busy`.
+import { ALIAS_TO_COLUMN } from './lib/outcomes';
 
 export type LogCallInput = {
   customerId: string;
@@ -42,14 +39,14 @@ export async function logCall(
   input: LogCallInput,
 ): Promise<{ ok: true; scheduledNext: boolean } | { ok: false; error: string }> {
   if (!uuid(input.customerId)) return { ok: false, error: 'Invalid customer.' };
-  if (!OUTCOMES.has(input.outcome)) return { ok: false, error: 'Choose a call outcome.' };
+  if (!(input.outcome in ALIAS_TO_COLUMN)) return { ok: false, error: 'Choose a call outcome.' };
   if (input.nextDueOn && !/^\d{4}-\d{2}-\d{2}$/.test(input.nextDueOn))
     return { ok: false, error: 'Next follow-up date is not a valid date.' };
   if (input.note.length > 2000) return { ok: false, error: 'Note is too long.' };
   if (input.contactNumberId && !uuid(input.contactNumberId))
     return { ok: false, error: 'Invalid number.' };
 
-  const outcome = TO_COLUMN[input.outcome] ?? input.outcome;
+  const outcome = ALIAS_TO_COLUMN[input.outcome];
   const now = new Date().toISOString();
   const nextAt = input.nextDueOn ? `${input.nextDueOn}T00:00:00+05:30` : null;
 

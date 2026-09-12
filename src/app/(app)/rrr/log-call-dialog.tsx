@@ -2,6 +2,15 @@
 
 import { useState, useTransition } from 'react';
 import { logCall } from './log-call-action';
+import { istTodayPlus } from './lib/format';
+// The buttons, their wording and their pre-filled dates now come from the one
+// outcome table in lib/outcomes.ts, which the filter, the timeline and the
+// server whitelist all read too. The wording itself is deliberately unchanged:
+// PROJECT.md D-053 makes the app English throughout, but this is the floor's
+// own form vocabulary on the screen they use all day, so switching it is a
+// call for the team to make rather than a side effect of a refactor.
+import { OUTCOME_INPUTS } from './lib/outcomes';
+import { useModal } from './lib/use-modal';
 
 export type ContactNumber = { id: string; label_en: string };
 
@@ -11,27 +20,6 @@ export type CallTarget = {
   phone: string;
   followupId: string | null;
   orderId: string | null;
-};
-
-// Same wording and order as the floor's existing form, so nobody has to learn
-// a new vocabulary to do the job they already do. `days` pre-fills the next
-// follow-up date the way that outcome usually goes; null means "no date
-// unless the rep picks one".
-const OUTCOMES: { value: string; label: string; hint: string; days: number | null }[] = [
-  { value: 'order_placed',          label: 'Order ho gaya',           hint: 'Converted',          days: null },
-  { value: 'interested',            label: 'Interested',              hint: 'Order chance high',  days: 3 },
-  { value: 'medicine_not_finished', label: 'Medicine khatam nahi hui', hint: 'Course chal raha',   days: 10 },
-  { value: 'will_update_later',     label: 'Baad mein batayenge',     hint: 'Date select karein', days: 7 },
-  { value: 'no_answer',             label: 'Call not picked / busy',  hint: '3 din baad',         days: 3 },
-  { value: 'not_interested',        label: 'Not interested',          hint: '2 month freeze',     days: 60 },
-  { value: 'wrong_number',          label: 'Wrong number',            hint: 'Band karein',        days: null },
-  { value: 'connected',             label: 'Baat hui',                hint: 'Note likhein',       days: 7 },
-];
-
-const addDays = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
 };
 
 export function LogCallDialog({
@@ -48,12 +36,16 @@ export function LogCallDialog({
   const [nextOn, setNextOn] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const { ref, onBackdropClick } = useModal(onClose);
 
   function pickOutcome(value: string) {
     setOutcome(value);
-    const preset = OUTCOMES.find((o) => o.value === value);
-    // Only ever a starting point — the rep can clear or change it.
-    setNextOn(preset?.days ? addDays(preset.days) : '');
+    const preset = OUTCOME_INPUTS.find((o) => o.alias === value);
+    // Only ever a starting point — the rep can clear or change it. Counted in
+    // IST, like every other date in this module: the old version stepped the
+    // machine's own calendar, so a call logged before 05:30 scheduled its
+    // follow-up a day early.
+    setNextOn(preset?.days ? istTodayPlus(preset.days) : '');
   }
 
   function save() {
@@ -79,20 +71,27 @@ export function LogCallDialog({
   }
 
   return (
-    <div className="crm-dialog rrr-dialog" role="dialog" aria-modal="true" aria-label={`Log call for ${target.name}`}>
-      <div className="rrr-dialog-body">
+    <div className="crm-dialog rrr-dialog" onMouseDown={onBackdropClick}>
+      <div
+        className="rrr-dialog-body"
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Log call for ${target.name}`}
+        tabIndex={-1}
+      >
         <h2 className="dialog-title">{target.name}</h2>
         <p className="muted">{target.phone}</p>
 
         <fieldset className="rrr-outcomes">
           <legend>Call outcome kya raha?</legend>
-          {OUTCOMES.map((o) => (
+          {OUTCOME_INPUTS.map((o) => (
             <button
-              key={o.value}
+              key={o.alias}
               type="button"
-              className={`rrr-outcome ${outcome === o.value ? 'chosen' : ''}`}
-              onClick={() => pickOutcome(o.value)}
-              aria-pressed={outcome === o.value}
+              className={`rrr-outcome ${outcome === o.alias ? 'chosen' : ''}`}
+              onClick={() => pickOutcome(o.alias)}
+              aria-pressed={outcome === o.alias}
             >
               <strong>{o.label}</strong>
               <span className="muted">{o.hint}</span>
