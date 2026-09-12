@@ -1,0 +1,68 @@
+.crm-shell:has(.rz-page) { min-width: 0; }
+.crm-main:has(.rz-page) { overflow: auto; }
+.crm-shell:has(.rz-page) > * { min-width: 0; }
+@media (max-width: 650px) {
+  .crm-shell:has(.rz-page) .crm-sidebar nav .nav-sub { display: block; }
+  .crm-shell:has(.rz-page) .crm-sidebar nav .nav-toggle { display: flex; }
+  .crm-shell:has(.rz-page) .crm-sidebar nav > div { flex-shrink: 0; }
+}
+.rz-page .rz-filters label:has(input[aria-label="Search paid leads"]) { min-width: min(280px, 100%); }
+.rz-page { min-width: 0; background: var(--surface); min-height: 100%; letter-spacing: 0; }
+.rz-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 28px 20px; border-bottom: 1px solid var(--border); }
+.rz-eyebrow { color: var(--text-dim); font-size: 10px; margin-bottom: 5px; }
+.rz-header h1 { font-size: 26px; line-height: 34px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0; }
+.rz-mode { font-size: 11px; line-height: 20px; color: var(--paid); background: var(--paid-bg); padding: 0 8px; border-radius: 4px; font-weight: 500; }
+.rz-actions, .rz-section-heading, .rz-pagination, .rz-pagination > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rz-actions { font-size: 11px; }
+.rz-actions button { height: 32px; width: 34px; display: grid; place-items: center; }
+.rz-muted { color: var(--text-dim); font-size: 11px; }
+.rz-filters { padding: 16px 28px; display: flex; gap: 12px; align-items: end; flex-wrap: wrap; background: var(--bg); }
+.rz-filters label { display: grid; gap: 4px; font-size: 11px; color: var(--text-dim); }
+.rz-filters input, .rz-filters select, .rz-transaction-filters select { height: 34px; padding: 4px 10px; color: var(--text); font-size: 12px; max-width: 100%; }
+.rz-filters button { height: 34px; }
+.rz-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.rz-range { margin-left: auto; align-self: center; font-size: 11px; color: var(--text-dim); }
+.rz-range strong { margin-left: 6px; }
+.rz-tabs { display: flex; padding: 0 28px; gap: 24px; border-bottom: 1px solid var(--border); }
+.rz-tabs button { border: 0; border-radius: 0; min-height: 44px; padding: 8px 0; background: transparent; color: var(--text-dim); border-bottom: 2px solid transparent; }
+.rz-tabs button[aria-current] { color: var(--accent); border-color: var(--accent); }
+.rz-body { padding: 24px 28px; }
+.rz-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.rz-metric { border: 1px solid var(--border); border-radius: 4px; padding: 16px; min-width: 0; border-top: 3px solid var(--border); }
+.rz-metric.good { border-top-color: var(--paid); }.rz-metric.warn { border-top-color: var(--pend); }.rz-metric.bad { border-top-color: var(--stop); }
+.rz-page h2 { font-size: 14px; line-height: 20px; font-weight: 600; margin: 0; }
+.rz-metric h2 { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.rz-metric > strong { font-size: 23px; line-height: 32px; display: block; margin-top: 10px; overflow-wrap: anywhere; }
+.rz-metric p { font-size: 11px; line-height: 16px; color: var(--text-dim); margin: 6px 0 0; }
+.rz-analysis { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); margin: 26px 0 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.rz-trend { padding: 20px 24px 16px 0; min-width: 0; }
+.rz-section-heading { margin-bottom: 16px; flex-wrap: wrap; }
+.rz-segment { display: flex; }.rz-segment button { border-radius: 0; min-width: 65px; }.rz-segment button:first-child { border-radius: 4px 0 0 4px; }.rz-segment button:last-child { border-radius: 0 4px 4px 0; border-left: 0; }.rz-segment button[aria-pressed=true] { background: var(--accent-bg); color: var(--accent); }
+.rz-chart-scroll { overflow-x: auto; padding-top: 30px; }
+.rz-chart { display: flex; height: 200px; align-items: end; gap: 5px; padding: 0 5px; }
+.rz-chart-column { flex: 1; min-width: 20px; height: 100%; display: flex; flex-direction: column; justify-content: end; align-items: center; }
+.rz-bar-track { height: 170px; width: 100%; display: flex; align-items: end; border-bottom: 1px solid var(--border); }
+.rz-bar { background: var(--accent); width: 100%; max-width: 42px; margin: 0 auto; position: relative; border-radius: 2px 2px 0 0; }
+.rz-bar:hover, .rz-bar:focus { background: var(--paid); }
+.rz-chart-tip { display: none; position: absolute; bottom: 100%; left: 0; z-index: 2; background: var(--text); color: var(--surface); padding: 6px; width: 145px; border-radius: 4px; font-size: 10px; }
+.rz-bar:hover .rz-chart-tip, .rz-bar:focus .rz-chart-tip { display: block; }.rz-chart-column:nth-last-child(-n+4) .rz-chart-tip { left: auto; right: 0; }
+.rz-axis { font-size: 9px; color: var(--text-dim); height: 25px; padding-top: 5px; white-space: nowrap; }
+.rz-methods { padding: 20px 0 20px 24px; border-left: 1px solid var(--border); }.rz-method { margin-top: 18px; }.rz-method > div { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; }.rz-method progress { width: 100%; height: 5px; accent-color: var(--paid); display: block; margin: 7px 0; }
+.rz-sync { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-dim); padding: 12px 0 24px; }
+.rz-count { margin-left: 7px; font-size: 11px; font-weight: 400; color: var(--text-dim); }
+.rz-transaction-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.rz-search { display: flex; align-items: center; border: 1px solid var(--border-str); border-radius: 4px; padding-left: 10px; flex: 1; min-width: 220px; }.rz-search input { width: 100%; height: 34px; border: 0; padding: 6px 10px; background: transparent; }
+.rz-table-scroll { overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+.rz-page table { border-collapse: collapse; width: 100%; font-size: 11px; white-space: nowrap; }
+.rz-page th { text-align: left; font-weight: 500; color: var(--text-dim); background: var(--bg); }
+.rz-page th, .rz-page td { padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.rz-page td small { display: block; color: var(--text-dim); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.rz-page tbody tr:last-child td { border-bottom: 0; }.rz-page tbody tr:hover { background: var(--hover); }
+.rz-page th button { border: 0; background: transparent; padding: 0; font-size: inherit; }
+.rz-link { border: 0; background: transparent; color: var(--accent); padding: 0; font: inherit; }.rz-link:hover { text-decoration: underline; background: transparent; }
+.rz-amount { font-weight: 600; }.rz-status { display: inline-block; border-radius: 4px; background: var(--bg); font-size: 10px; padding: 1px 7px; text-transform: capitalize; }.rz-status.good { background: var(--paid-bg); color: var(--paid); }.rz-status.bad { background: var(--stop-bg); color: var(--stop); }.rz-status.warn { background: var(--pend-bg); color: var(--pend); }
+.rz-pagination { padding: 12px 0; font-size: 11px; color: var(--text-dim); }.rz-pagination button { width: 32px; }
+.rz-empty, .rz-loading { padding: 45px 16px !important; text-align: center; color: var(--text-dim); }.rz-error { color: var(--stop); padding: 12px; }
+.rz-detail { margin: auto; border: 1px solid var(--border); border-radius: 6px; width: 540px; max-width: calc(100vw - 24px); max-height: 90dvh; padding: 24px; background: var(--surface); color: var(--text); overflow: auto; }.rz-detail::backdrop { background: #0007; }.rz-detail-amount { font-size: 28px; line-height: 36px; margin: 12px 0; overflow-wrap: anywhere; }.rz-detail dl > div { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--border); padding: 9px 0; font-size: 12px; }.rz-detail dt { color: var(--text-dim); }.rz-detail dd { margin: 0; overflow-wrap: anywhere; }.rz-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; background: var(--bg); padding: 12px; }.rz-detail h3 { font-size: 13px; margin-top: 18px; }
+@media (max-width: 1100px) { .rz-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.rz-actions > span { display: none; }.rz-analysis { grid-template-columns: minmax(0, 1fr); }.rz-methods { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; }.rz-trend { padding-right: 0; } }
+@media (max-width: 650px) { .crm-shell:has(.rz-page) { grid-template-columns: 1fr; height: auto; }.crm-shell:has(.rz-page) .crm-sidebar { padding: 10px; border-right: 0; border-bottom: 1px solid var(--border); }.crm-shell:has(.rz-page) .crm-sidebar nav { display: flex; overflow-x: auto; gap: 4px; }.crm-shell:has(.rz-page) .crm-sidebar .nav-caption, .crm-shell:has(.rz-page) .sidebar-foot, .crm-shell:has(.rz-page) .nav-sub, .crm-shell:has(.rz-page) .nav-toggle { display: none; }.crm-shell:has(.rz-page) .crm-brand { margin-bottom: 10px; }.rz-header, .rz-filters { padding: 16px; }.rz-body { padding: 16px; }.rz-tabs { padding: 0 16px; gap: 20px; }.rz-metrics { gap: 8px; }.rz-metric { padding: 12px; }.rz-metric > strong { font-size: 19px; line-height: 27px; }.rz-range { width: 100%; margin-left: 0; }.rz-search { min-width: 100%; }.rz-transaction-filters select { flex: 1; min-width: 110px; }.rz-pagination { flex-wrap: wrap; }.rz-detail dl > div { grid-template-columns: 110px minmax(0, 1fr); } }
