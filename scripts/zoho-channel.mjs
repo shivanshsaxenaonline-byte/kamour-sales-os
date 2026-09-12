@@ -49,7 +49,13 @@ const expiryIn = (days) => {
   return ist.toISOString().slice(0, 19) + '+05:30';
 };
 
+// Cached for the life of the run. Refreshing per request is what earns
+// "You have made too many requests continuously" from Zoho: a single --renew
+// makes three API calls, and a token refresh for each one is three refreshes
+// to do one job. src/lib/zoho/client.ts caches for the same reason.
+let cachedToken = null;
 async function token() {
+  if (cachedToken) return cachedToken;
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: process.env.ZOHO_CLIENT_ID,
@@ -59,7 +65,8 @@ async function token() {
   const r = await fetch(`${ACCOUNTS}/oauth/v2/token`, { method: 'POST', body });
   const j = await r.json();
   if (!j.access_token) throw new Error(`refresh failed: ${JSON.stringify(j)}`);
-  return j.access_token;
+  cachedToken = j.access_token;
+  return cachedToken;
 }
 
 async function call(method, path, body) {
