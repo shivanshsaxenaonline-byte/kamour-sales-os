@@ -29,6 +29,12 @@ const NAV: {
     roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
   },
   {
+    href: "/leads/paid-elementor",
+    label: "Paid Elementor",
+    icon: "leads",
+    roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
+  },
+  {
     href: "/consultation",
     label: "Consultations",
     icon: "consultation",
@@ -68,7 +74,14 @@ const NAV: {
     children: [
       { href: "/rrr", label: "All customers" },
       { href: "/rrr/ai", label: "AI Leads · today" },
+      { href: "/rrr/medicine-ending", label: "Medicine Ending" },
     ],
+  },
+  {
+    href: "/razorpay",
+    label: "Razorpay",
+    icon: "orders",
+    roles: ["sales_manager", "admin", "coo", "ceo", "auditor"],
   },
 ];
 const ROLE_LABEL: Record<UserRole, string> = {
