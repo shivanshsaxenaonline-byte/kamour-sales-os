@@ -22,10 +22,23 @@ export const maxDuration = 300;
  *   ?limit=20   do a slice first
  *   ?dry=1      report what it would fetch, change nothing
  */
+function authorised(request: Request) {
+  // Vercel Cron sends this; a human or another job passes the token directly.
+  const secret = process.env.CRON_SECRET;
+  if (secret && request.headers.get('authorization') === `Bearer ${secret}`) return true;
+
+  const token = process.env.ZOHO_WEBHOOK_TOKEN;
+  return !!token && request.headers.get('x-zoho-token') === token;
+}
+
+/** Vercel Cron issues GET. Same work either way — this is the hourly safety
+ *  net that retries whatever the inline sync in the webhook could not finish. */
+export async function GET(request: Request) {
+  return POST(request);
+}
+
 export async function POST(request: Request) {
-  const expected = process.env.ZOHO_WEBHOOK_TOKEN;
-  const sent = request.headers.get('x-zoho-token');
-  if (!expected || sent !== expected) {
+  if (!authorised(request)) {
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 

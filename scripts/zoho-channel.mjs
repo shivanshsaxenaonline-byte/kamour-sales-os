@@ -36,10 +36,18 @@ const NOTIFY_URL = arg('--url')
   ?? 'https://kamour-sales-os.vercel.app/api/zoho/webhook';
 const TOKEN = process.env.ZOHO_WEBHOOK_TOKEN ?? 'kamour_zoho_live';
 
-/** Zoho caps a channel at 1 day for some plans and 7 for others; it clamps a
- *  longer request down rather than refusing, so ask for a week and accept
- *  whatever comes back. */
-const expiryIn = (days) => new Date(Date.now() + days * 86_400_000).toISOString();
+/** Zoho wants an ISO 8601 timestamp WITH a numeric offset and no milliseconds
+ *  — "2026-09-19T10:33:42+05:30". A plain toISOString() (…000Z) is rejected
+ *  with "invalid data" on $.watch[0].channel_expiry, which is not an obvious
+ *  message for a formatting problem. Written in IST because that is the CRM's
+ *  own timezone and what the dashboard shows back.
+ *
+ *  Zoho also caps how far ahead a channel may run and clamps a longer request
+ *  down rather than refusing it, so asking for a week is safe. */
+const expiryIn = (days) => {
+  const ist = new Date(Date.now() + days * 86_400_000 + 5.5 * 3600_000);
+  return ist.toISOString().slice(0, 19) + '+05:30';
+};
 
 async function token() {
   const body = new URLSearchParams({

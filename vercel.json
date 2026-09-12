@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/zoho/renew",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/zoho/catchup",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
