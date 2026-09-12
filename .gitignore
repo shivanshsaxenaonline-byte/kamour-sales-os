@@ -19,3 +19,6 @@ tsconfig.tsbuildinfo
 
 .vercel
 .env*
+
+# Claude Code personal settings — permission grants, not shared with the repo
+.claude/settings.local.json
