@@ -17,7 +17,9 @@ import pg from 'pg';
 
 pg.types.setTypeParser(1082, (v) => v);
 
-const FILE = 'data/incoming/zoho/Consultation_Lead_2026_09_07.csv';
+const FILE = process.argv.includes('--file')
+  ? process.argv[process.argv.indexOf('--file') + 1]
+  : 'data/incoming/zoho/Consultation_Lead_2026_09_07.csv';
 const BATCH = 5000;
 const LIMIT = process.argv.includes('--limit')
   ? Number(process.argv[process.argv.indexOf('--limit') + 1]) : Infinity;

@@ -12,6 +12,8 @@
     "db:backup": "node scripts/backup.mjs",
     "db:seed-team": "node scripts/seed-team.mjs",
     "import:sheets": "node scripts/import-sheets.mjs",
+    "zoho:pull": "node scripts/zoho-pull.mjs",
+    "zoho:import": "node scripts/import-zoho.mjs",
     "db:backup:cloud": "node scripts/backup-upload.mjs",
     "dev": "next dev",
     "build": "next build",

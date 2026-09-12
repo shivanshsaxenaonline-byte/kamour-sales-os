@@ -77,6 +77,7 @@ const run = async () => {
         if (e.position) {
           const upto = sql.slice(0, Number(e.position));
           console.error(`  at line ${upto.split('\n').length}`);
+        
         }
         process.exitCode = 1;
         return;
