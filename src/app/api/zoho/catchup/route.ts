@@ -31,8 +31,13 @@ function authorised(request: Request) {
   return !!token && request.headers.get('x-zoho-token') === token;
 }
 
-/** Vercel Cron issues GET. Same work either way — this is the hourly safety
- *  net that retries whatever the inline sync in the webhook could not finish. */
+/** Vercel Cron issues GET. Same work either way — the safety net that retries
+ *  whatever the inline sync in the webhook could not finish.
+ *
+ *  Daily, not hourly: a Vercel Hobby account refuses any cron that runs more
+ *  than once a day. That is a real limit on how stale a missed change can get,
+ *  so this is a backstop and not the delivery path — the webhook applies
+ *  changes inline within seconds, and only a failure there waits for this. */
 export async function GET(request: Request) {
   return POST(request);
 }

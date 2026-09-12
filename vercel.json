@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/zoho/catchup",
-      "schedule": "0 * * * *"
+      "schedule": "30 2 * * *"
     }
   ]
 }
