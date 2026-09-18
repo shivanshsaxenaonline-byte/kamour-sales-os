@@ -117,27 +117,29 @@ async function main() {
 
   console.log('\nThe mix\n');
 
+  const carryCount = Number((await one(
+    `select count(*)::int n from ai_daily_leads
+     where run_on = $1 and reason like 'Carried over from %'`, [today])).n);
+  const freshSeats = expected - carryCount;
   const byBucket = Object.fromEntries((await c.query(
-    `select bucket, count(*)::int n from ai_daily_leads where run_on = $1
+    `select bucket, count(*)::int n from ai_daily_leads
+     where run_on = $1 and reason not like 'Carried over from %'
      group by 1`, [today])).rows.map((r) => [r.bucket, r.n]));
   const rules = await c.query('select code, share_pct from ai_lead_rules where is_active order by sort_order');
 
   for (const r of rules.rows) {
-    const want = Math.floor((r.share_pct * expected) / 100);
-    const got = byBucket[r.code] ?? 0;
-    // A bucket may end up OVER its share (the top-up fills the day from
-    // whoever is left) but never under it unless that bucket has genuinely
-    // run out of eligible people. Under-filling silently is the failure mode
-    // this catches.
-    ok(`${r.code} is at least its ${r.share_pct}% share (${want})`, got >= want,
-       `got ${got}`);
+    // Targets are ceilings on the first pick, not a guarantee: a bucket can
+    // run out after the 3-day unworked carry-over exclusion. The top-up fills
+    // the remaining seats from any eligible bucket.
+    const target = Math.floor((r.share_pct * freshSeats) / 100);
+    console.log(`  INFO  ${r.code}: ${byBucket[r.code] ?? 0} fresh, ${target} target`);
   }
 
   const bad = (await one(
     `select count(*)::int n from ai_daily_leads l
      left join ai_lead_rules r on r.code = l.bucket
-     where l.run_on = $1 and r.code is null`, [today])).n;
-  ok('every lead carries a bucket the rules table knows', Number(bad) === 0);
+     where l.run_on = $1 and (r.code is null or not r.is_active)`, [today])).n;
+  ok('every lead carries an active bucket the rules table knows', Number(bad) === 0);
 
   console.log('\nWho may build it\n');
 
@@ -176,11 +178,17 @@ async function main() {
 
   const tomorrow = (await one(`select (ist_today() + 1)::date d`)).d;
   await c.query('select fn_generate_ai_daily_leads($1::date, true)', [tomorrow]);
-  const repeated = Number((await one(
-    `select count(*)::int n from ai_daily_leads a
+  const repeated = await one(
+    `select count(*)::int n,
+       count(*) filter (where b.reason not like 'Carried over from %'
+          or b.owner_id is distinct from a.owner_id)::int wrong
+     from ai_daily_leads a
      join ai_daily_leads b on b.customer_id = a.customer_id and b.run_on = $2
-     where a.run_on = $1`, [today, tomorrow])).n);
-  ok("nobody from today reappears on tomorrow's list", repeated === 0, `${repeated} repeated`);
+     where a.run_on = $1`, [today, tomorrow]);
+  const carryCap = caps.rows.reduce((n, r) => n + Math.floor(Number(r.cap) * 0.6), 0);
+  ok('unfinished names reappear only as capped carry-over for the same rep',
+    Number(repeated.wrong) === 0 && Number(repeated.n) <= carryCap,
+    `${repeated.n} repeated, ${repeated.wrong} outside carry-over, cap ${carryCap}`);
 
   const dnd = Number((await one(
     `select count(*)::int n from ai_daily_leads l join customers c on c.id = l.customer_id
@@ -195,12 +203,16 @@ async function main() {
        from followups f where f.customer_id = l.customer_id and f.completed_at is not null
      ) last on true
      where last.outcome in ('not_interested','wrong_number')
-       and last.done > ist_today() - 90`)).n);
-  ok('nobody who said no in the last 90 days is picked', rejected === 0, `${rejected} picked`);
+       and last.done > ist_today() - 20
+       -- The "no" has to predate the list that picked them. Every historical
+       -- run contains customers who were dealt in the morning, rung at noon
+       -- and said no in the afternoon: that is the rule working, not the rule
+       -- broken, and without this line the check failed on all 64 of them.
+       and last.done < l.run_on`)).n);
+  ok('nobody who said no in the last 20 days is picked', rejected === 0, `${rejected} picked`);
 
-  console.log('\nThe widened read is exactly as wide as it needs to be\n');
+  console.log('\nAI suggestions are not sales assignments\n');
 
-  // A sales exec who was dealt leads, and who does not own all of them.
   const dealt = await one(
     `select l.owner_id, count(*)::int n from ai_daily_leads l
      join users u on u.id = l.owner_id
@@ -210,69 +222,20 @@ async function main() {
     console.log('  SKIP  no sales_exec was dealt leads today');
   } else {
     const exec = dealt.owner_id;
-    const mine = (await c.query(
-      `select customer_id from ai_daily_leads where run_on = $1 and owner_id = $2`,
-      [today, exec])).rows.map((r) => r.customer_id);
-
-    // Somebody on today's list who was dealt to a DIFFERENT rep, and whom this
-    // exec does not own. That is the row the widening must NOT expose.
-    const other = await one(
-      `select l.customer_id from ai_daily_leads l
-       join customers c on c.id = l.customer_id
-       where l.run_on = $1 and l.owner_id is distinct from $2
-         and c.current_owner_id is distinct from $2
-         and c.original_owner_id is distinct from $2
-       limit 1`, [today, exec]);
-
-    // Somebody NOT on any list at all, whom this exec does not own.
-    const stranger = await one(
-      `select c.id from customers c
-       where c.merged_into_id is null
-         and c.current_owner_id is distinct from $1
-         and c.original_owner_id is distinct from $1
-         and not exists (select 1 from ai_daily_leads l where l.customer_id = c.id)
-       limit 1`, [exec]);
-
+    const expectedWork = Number((await one(
+      `select count(*)::int n from rrr_work_items where assigned_to = $1 and completed_at is null`,
+      [exec])).n);
     await as(exec);
-
-    const seenOwn = Number((await one(
-      `select count(*)::int n from customers where id = any($1::uuid[])`, [mine])).n);
-    ok(`the exec can see all ${mine.length} customers dealt to them today`,
-       seenOwn === mine.length, `saw ${seenOwn}`);
-
     const seenList = Number((await one(
       `select count(*)::int n from v_rrr_ai_leads where run_on = $1`, [today])).n);
-    ok('and sees only their own leads on the AI list, not the whole day',
-       seenList === mine.length, `saw ${seenList} of ${total}`);
+    ok('AI suggestions stay invisible to sales until Alka assigns work', seenList === 0,
+       `saw ${seenList} of ${total}`);
 
-    if (other) {
-      const leak = Number((await one(
-        `select count(*)::int n from customers where id = $1`, [other.customer_id])).n);
-      ok("but NOT a lead dealt to another rep", leak === 0, `saw ${leak}`);
-    } else {
-      console.log("  SKIP  every other rep's lead is already owned by this exec");
-    }
-
-    if (stranger) {
-      const leak = Number((await one(
-        `select count(*)::int n from customers where id = $1`, [stranger.id])).n);
-      ok('and NOT a customer who is on no list at all', leak === 0, `saw ${leak}`);
-    }
-
-    // The point of seeing the customer is being able to read their history.
-    const history = Number((await one(
-      `select count(*)::int n from v_rrr_customer_orders where customer_id = any($1::uuid[])`,
-      [mine])).n);
-    ok('and can read the order history behind the leads they were dealt', history > 0,
-       'no orders visible');
-
-    // Read, not write. Widening customers_read must not have widened anything else.
-    const write = await attempt(
-      `update customers set full_name = 'x' where id = $1`, [mine[0]]);
-    const changed = Number((await one(
-      `select count(*)::int n from customers where id = $1 and full_name = 'x'`, [mine[0]])).n);
-    ok('the widened read did not become a widened write',
-       changed === 0, write.error ?? 'the update went through');
+    const work = Number((await one(
+      `select count(*)::int n from rrr_work_items where assigned_to = $1 and completed_at is null`,
+      [exec])).n);
+    ok('sales worklist contains only explicit open assignments', work === expectedWork,
+       `saw ${work}, expected ${expectedWork}`);
 
     await asPostgres();
   }

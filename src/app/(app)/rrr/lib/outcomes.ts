@@ -23,8 +23,8 @@ type Input = {
    *  log-call-dialog.tsx about PROJECT.md D-053. */
   label: string;
   hint: string;
-  /** Days ahead to pre-fill the next follow-up date; null = no date unless the
-   *  rep picks one. Only ever a starting point. */
+  /** Days ahead to pre-fill a standard follow-up; null means a conditional
+   *  field asks for the date or remaining medicine days. */
   days: number | null;
 };
 
@@ -35,35 +35,44 @@ type Outcome = { label: string; tone: OutcomeTone; input?: Input };
 const OUTCOME_DEFINITIONS = {
   order_placed: {
     label: 'Order placed', tone: 'positive',
-    input: { alias: 'order_placed', label: 'Order ho gaya', hint: 'Converted', days: null },
   },
   will_buy: {
     label: 'Interested', tone: 'positive',
-    input: { alias: 'interested', label: 'Interested', hint: 'Order chance high', days: 3 },
+    input: { alias: 'interested', label: 'Interested', hint: 'Kal follow-up', days: 1 },
   },
   medicine_not_finished: {
     label: 'Medicine not finished', tone: 'attention',
-    input: { alias: 'medicine_not_finished', label: 'Medicine khatam nahi hui', hint: 'Course chal raha', days: 10 },
+    input: { alias: 'medicine_not_finished', label: 'Medicine khatam nahi hui', hint: 'Bache hue din batayein', days: null },
   },
   will_update_later: {
     label: 'Will update later', tone: 'attention',
-    input: { alias: 'will_update_later', label: 'Baad mein batayenge', hint: 'Date select karein', days: 7 },
+    input: { alias: 'will_update_later', label: 'Baad mein batayenge', hint: 'Kab batayenge? Date chunein', days: null },
   },
   no_answer: {
     label: 'Call not picked', tone: 'attention',
-    input: { alias: 'no_answer', label: 'Call not picked / busy', hint: '3 din baad', days: 3 },
+    // Three days, not one. Ringing the same unanswered number tomorrow morning
+    // spends a slot on somebody who is simply not picking up this week; the
+    // sheet the floor worked from before the cutover left three days too. The
+    // AI list's own retry gap is the same three days, so a missed call comes
+    // back once, on the same day, whichever route brings it.
+    input: { alias: 'no_answer', label: 'Call not picked / busy', hint: '3 din baad dobara try', days: 3 },
   },
   not_interested: {
     label: 'Not interested', tone: 'critical',
-    input: { alias: 'not_interested', label: 'Not interested', hint: '2 month freeze', days: 60 },
+    // Twenty days, not sixty. A "no" on the phone is usually a "not this
+    // week" — the course they are on has not run out yet, or the money is
+    // not there this month. Two months put them back on the list long after
+    // the next order would have been due, so the floor asked for the freeze
+    // to be a third of that: long enough not to pester, short enough that
+    // they come back while the last course is still the one they remember.
+    input: { alias: 'not_interested', label: 'Not interested', hint: '20 din freeze', days: 20 },
   },
   wrong_number: {
     label: 'Wrong number', tone: 'critical',
-    input: { alias: 'wrong_number', label: 'Wrong number', hint: 'Band karein', days: null },
   },
   connected: {
     label: 'Baat hui', tone: 'positive',
-    input: { alias: 'connected', label: 'Baat hui', hint: 'Note likhein', days: 7 },
+    input: { alias: 'connected', label: 'Baat hui', hint: 'Kab batayenge? Date chunein', days: null },
   },
   // Legacy and import-only: the column holds it and the timeline must paint
   // it, but the dialog folds "busy" into "call not picked", so there is no
@@ -90,14 +99,12 @@ export const OUTCOME_INPUTS = OUTCOME_CODES
   .map((code) => entry(code).input)
   .filter((i): i is Input => !!i);
 
-/** What the dialog may post, and what each alias stores. Built from the table
- *  above so the server whitelist can never fall behind the buttons. `busy` is
- *  accepted too: migration 024 allows it and imported rows carry it. */
+/** Only current dialog options may be posted. Historical/import-only outcomes
+ *  remain in OUTCOMES so old timelines still display correctly. */
 export const ALIAS_TO_COLUMN: Record<string, OutcomeCode> = Object.fromEntries([
-  ...OUTCOME_CODES.map((code) => [code, code] as const),
   ...OUTCOME_CODES.flatMap((code) => {
     const alias = entry(code).input?.alias;
-    return alias && alias !== code ? [[alias, code] as const] : [];
+    return alias ? [[alias, code] as const, [code, code] as const] : [];
   }),
 ]);
 
