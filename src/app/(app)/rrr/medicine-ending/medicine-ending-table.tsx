@@ -130,7 +130,7 @@ export function MedicineEndingTable({
           <Link href="/rrr/medicine-ending" className="active" aria-current="page">Medicine Ending<span>{actionCount}</span></Link>
         </div>
         <span className="muted">
-          Showing {visible.length.toLocaleString('en-IN')} of {rows.length.toLocaleString('en-IN')} delivered orders · today {day(today)}
+          Showing {visible.length.toLocaleString('en-IN')} of {rows.length.toLocaleString('en-IN')} customers on a delivered course · today {day(today)}
         </span>
         {message ? <span className="muted" role="status">{message}</span> : null}
       </div>
@@ -172,7 +172,7 @@ export function MedicineEndingTable({
               <option value="action">Action list · ending in {ACTION_LEAD_DAYS} days ({actionCount})</option>
               <option value="ending">Ending in 7 days ({endingCount})</option>
               <option value="overdue">Already ended ({overdueCount})</option>
-              <option value="all">All delivered 15/30 day courses</option>
+              <option value="all">All current 15/30 day courses</option>
             </select>
           </label>
           <label className="rrr-field">
@@ -251,7 +251,7 @@ export function MedicineEndingTable({
         </table>
         {visible.length === 0 ? (
           <div className="grid-empty">
-            <p>No delivered 15/30 day medicine orders match this filter.</p>
+            <p>No current 15/30 day medicine courses match this filter.</p>
           </div>
         ) : null}
       </div>

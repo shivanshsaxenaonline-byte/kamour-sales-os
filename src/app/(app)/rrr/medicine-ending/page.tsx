@@ -172,16 +172,20 @@ export default async function MedicineEndingPage() {
     if (!known || due > known) statedEndsOn.set(followup.customer_id, due);
   }
 
-  // Only the newest delivered course of a customer takes the stated date. The
-  // medicine they described is the one they are on; pinning their older orders
-  // to the same day would drag every one of them back onto the list as a
-  // duplicate row for the same phone call.
-  const newestOrder = new Set<string>();
+  // One row per customer: the course they are actually on.
+  //
+  // A customer who has reordered has two, three, six delivered courses behind
+  // them, and every one of those older courses ran out on its own date. The
+  // list was showing them — which is how a customer whose current medicine
+  // lasts to mid-October read as "8d overdue" from a course that was replaced
+  // by a delivery a week ago, and how one phone call turned into several rows.
+  // The medicine in their hands is the newest one; the rest are history.
+  const currentCourse = new Set<string>();
   const seenCustomer = new Set<string>();
   for (const o of (orders.data ?? []) as unknown as RawOrder[]) {
     if (seenCustomer.has(o.customer_id)) continue;   // delivered_at desc
     seenCustomer.add(o.customer_id);
-    newestOrder.add(o.id);
+    currentCourse.add(o.id);
   }
 
   const rows = ((orders.data ?? []) as unknown as RawOrder[])
@@ -189,6 +193,7 @@ export default async function MedicineEndingPage() {
       const customer = o.customers;
       if (!customer || customer.merged_into_id || !o.delivered_at || !o.course_duration_days)
         return false;
+      if (!currentCourse.has(o.id)) return false;
       return !calledSince.has(o.customer_id);
     })
     .map((o): MedicineEndingRow => {
@@ -203,7 +208,7 @@ export default async function MedicineEndingPage() {
       // Later of the two, never earlier: a customer who is running behind on
       // their course has more medicine left than the calendar says, and the
       // call is the only thing that knows it.
-      const stated = newestOrder.has(o.id) ? statedEndsOn.get(o.customer_id) : undefined;
+      const stated = statedEndsOn.get(o.customer_id);
       const endsOn = stated && stated > estimatedEnd ? stated : estimatedEnd;
       return {
         order_id: o.id,
