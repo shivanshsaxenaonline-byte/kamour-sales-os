@@ -15,6 +15,7 @@ const COLUMNS = `
   amount,
   course_duration_days,
   delivered_at,
+  created_at,
   customers!inner(full_name, phone_e164, is_dnd, merged_into_id)
 `;
 
@@ -25,6 +26,7 @@ type RawOrder = {
   amount: number;
   course_duration_days: number | null;
   delivered_at: string | null;
+  created_at: string;
   customers: {
     full_name: string;
     phone_e164: string;
@@ -57,7 +59,7 @@ export default async function MedicineEndingPage() {
   // option genuinely means all, and measuring says the whole set is 130 rows
   // (41.6 KB) — the cap is nowhere near binding, so bounding this by date
   // would narrow a user-facing filter to buy back nothing.
-  const [orders, numbers, usualNumber, reps, work, calls, watiCalls,
+  const [orders, reorders, numbers, usualNumber, reps, work, calls, watiCalls,
     medicineCalls, openFollowups] = await Promise.all([
     supabase
       .from('orders')
@@ -67,6 +69,18 @@ export default async function MedicineEndingPage() {
       .in('course_duration_days', [15, 30])
       .order('delivered_at', { ascending: false })
       .limit(750),
+    // Every order of any stage from the last four months, to answer one
+    // question: has this customer already bought again? Only 148 of the 2,037
+    // orders on record are ever marked `delivered` — the rest sit at
+    // `confirmed` — so "their newest delivered course" is not the same thing
+    // as "their newest order", and this screen was only ever seeing the first.
+    // Four months covers it: a course that is still near its ending date was
+    // delivered within the last six weeks, and anything newer came after that.
+    supabase.from('orders')
+      .select('id, customer_id, created_at')
+      .gte('created_at', `${addDaysIso(today, -120)}T00:00:00+05:30`)
+      .order('created_at', { ascending: false })
+      .limit(3000),
     supabase.from('contact_numbers').select('id, label_en')
       .eq('is_active', true).order('sort_order'),
     // See fn_my_calling_number: the number this rep last dialled.
@@ -188,12 +202,47 @@ export default async function MedicineEndingPage() {
     currentCourse.add(o.id);
   }
 
+  // Already bought the next course. The whole point of this list is to catch a
+  // customer before their medicine runs out and they drift; one who has placed
+  // a fresh order has done the thing the call was going to ask for, and ringing
+  // them is ringing about a bottle they finished weeks ago.
+  //
+  // This is why a customer whose last order was on 9 Sep sat in a rep's list
+  // over a course delivered on 30 Aug: the new order is `confirmed`, not
+  // `delivered`, so the delivered-orders query above could not see it.
+  //
+  // Strictly newer, so the two halves of an order split across two rows on the
+  // same day cannot cancel each other out.
+  //
+  // What counts as "newer" depends on what dated the course. Normally it is
+  // the order itself. But when the customer has told a rep how much medicine
+  // they have, that call is the later word: one customer reordered in July,
+  // said in September that his medicine runs to the 19th, and an order two
+  // months older than that call must not be read as him having moved on.
+  const reorderedAfter = new Map<string, string>();
+  for (const o of reorders.data ?? []) {
+    if (!o.customer_id || !o.created_at) continue;
+    const known = reorderedAfter.get(o.customer_id);
+    if (!known || o.created_at > known) reorderedAfter.set(o.customer_id, o.created_at);
+  }
+
+  const hasReordered = (customerId: string, orderedAt: string) => {
+    const newest = reorderedAfter.get(customerId);
+    if (!newest) return false;
+    const said = saidOn.get(customerId);
+    // Bought on or after the day they described what was left: whatever they
+    // had then, they have topped it up since.
+    if (said) return istDateFromTimestamp(newest) >= said;
+    return newest > orderedAt;
+  };
+
   const rows = ((orders.data ?? []) as unknown as RawOrder[])
     .filter((o) => {
       const customer = o.customers;
       if (!customer || customer.merged_into_id || !o.delivered_at || !o.course_duration_days)
         return false;
       if (!currentCourse.has(o.id)) return false;
+      if (hasReordered(o.customer_id, o.created_at)) return false;
       return !calledSince.has(o.customer_id);
     })
     .map((o): MedicineEndingRow => {
