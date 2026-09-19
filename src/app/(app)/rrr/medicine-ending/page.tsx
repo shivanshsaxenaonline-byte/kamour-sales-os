@@ -79,6 +79,12 @@ export default async function MedicineEndingPage() {
     supabase.from('orders')
       .select('id, customer_id, created_at')
       .gte('created_at', `${addDaysIso(today, -120)}T00:00:00+05:30`)
+      // A parcel that came back or never arrived is not a course in the
+      // customer's hands, so it must not read as "they have bought again" —
+      // they are owed a call more than anyone. Ops write the courier's answer
+      // into the sheet's Delivered Date cell and the sync now lands it on the
+      // stage (see src/lib/sheets/order-sync.ts).
+      .not('stage', 'in', '(rto,cancelled)')
       .order('created_at', { ascending: false })
       .limit(3000),
     supabase.from('contact_numbers').select('id, label_en')
