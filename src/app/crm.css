@@ -1060,6 +1060,37 @@
 .rrr-table input[type="checkbox"] {
   cursor: pointer;
 }
+.rrr-actions-cell {
+  width: 282px;
+  overflow: visible !important;
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+}
+.rrr-table th:last-child {
+  width: 282px;
+}
+.rrr-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: nowrap;
+  min-width: max-content;
+}
+.potential-star {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  color: var(--text-dim);
+}
+.potential-star .crm-icon {
+  width: 15px;
+  height: 15px;
+}
+.potential-star.active {
+  color: #b97900;
+  background: #fff4d8;
+  border-color: #e0b34a;
+}
 
 /* ---- RRR: log a call -------------------------------------------------- */
 /* .crm-dialog is styled for a real <dialog> (it has a ::backdrop). This one

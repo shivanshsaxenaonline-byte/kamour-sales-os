@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getServerViewer } from '@/lib/supabase/viewer';
 import { medicineEnds, istDateFromTimestamp, istToday } from '../lib/format';
 import type { ContactNumber } from '../log-call-dialog';
-import { MyWorkList, type MyWorkRow } from './my-work-list';
+import { MyWorkList, type MyWorkRow, type PotentialLeadRow } from './my-work-list';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +36,27 @@ type RawWatiWork = {
   customers: { full_name: string; phone_e164: string; is_dnd: boolean } | null;
 };
 
+type RawPotentialLead = {
+  id: string;
+  rrr_work_id: string | null;
+  wati_work_id: string | null;
+  customer_id: string | null;
+  source: string;
+  display_name: string;
+  phone_e164: string;
+  order_no: string | null;
+  note: string | null;
+  marked_by: string;
+  marked_at: string;
+};
+
 export default async function MyRrrWorkPage() {
   const { supabase: db, user, profile: me } = await getServerViewer();
   if (!user) redirect('/login');
   if (me?.role !== 'sales_exec' && me?.role !== 'sales_manager') redirect('/rrr/ai');
 
   const today = istToday();
-  const [work, wati, numbers, usualNumber] = await Promise.all([
+  const [work, wati, potential, numbers, usualNumber] = await Promise.all([
     db.from('rrr_work_items').select(`id, source, customer_id, order_id, due_on, last_called_at,
       last_outcome, medicine_days_left, customers!inner(full_name, phone_e164, is_dnd),
       orders!inner(order_no, course_duration_days, delivered_at, created_at,
@@ -57,6 +71,11 @@ export default async function MyRrrWorkPage() {
       customers(full_name, phone_e164, is_dnd)`)
       .eq('assigned_to', user.id).is('completed_at', null)
       .order('due_on', { ascending: true }).limit(500),
+    db.from('potential_leads')
+      .select('id, rrr_work_id, wati_work_id, customer_id, source, display_name, phone_e164, order_no, note, marked_by, marked_at')
+      .is('removed_at', null)
+      .order('marked_at', { ascending: false })
+      .limit(500),
     db.from('contact_numbers').select('id, label_en').eq('is_active', true).order('sort_order'),
     // The handset this rep last called from, so the Log-call dialog opens on
     // it instead of whatever sorts first. Their own history is behind a
@@ -122,7 +141,29 @@ export default async function MyRrrWorkPage() {
   }
   rows.sort((a, b) => a.due_on.localeCompare(b.due_on));
 
+  if (potential.error) console.error('[rrr/my] Potential leads unavailable', { error: potential.error });
+  const potentialRows = (potential.data ?? []) as RawPotentialLead[];
+  const markerIds = [...new Set(potentialRows.map((lead) => lead.marked_by))];
+  const { data: markers } = markerIds.length
+    ? await db.from('users').select('id,full_name').in('id', markerIds)
+    : { data: [] };
+  const markerName = new Map((markers ?? []).map((marker) => [marker.id as string, marker.full_name as string]));
+  const potentialLeads: PotentialLeadRow[] = potentialRows.map((lead) => ({
+    id: lead.id,
+    rrr_work_id: lead.rrr_work_id,
+    wati_work_id: lead.wati_work_id,
+    customer_id: lead.customer_id,
+    source: lead.source as PotentialLeadRow['source'],
+    display_name: lead.display_name,
+    phone_e164: lead.phone_e164,
+    order_no: lead.order_no,
+    note: lead.note,
+    marked_by_name: markerName.get(lead.marked_by) ?? 'Salesperson',
+    marked_at: lead.marked_at,
+  }));
+
   return <MyWorkList rows={rows} numbers={(numbers.data ?? []) as ContactNumber[]}
+    potentialLeads={potentialLeads}
     preferredNumberId={(usualNumber.data as string | null) ?? null}
     today={today} />;
 }
