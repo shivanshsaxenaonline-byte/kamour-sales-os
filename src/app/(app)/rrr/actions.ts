@@ -40,6 +40,8 @@ export async function assignRrr(
   revalidatePath('/rrr');
   revalidatePath('/rrr/due');
   revalidatePath('/rrr/my');
+  revalidatePath('/rrr/work');
+  revalidatePath('/rrr/analytics');
   return {
     ok: true,
     moved: result.owned ?? 0,
@@ -66,5 +68,7 @@ export async function assignRrrWork(
   revalidatePath('/rrr/medicine-ending');
   revalidatePath('/rrr/due');
   revalidatePath('/rrr/my');
+  revalidatePath('/rrr/work');
+  revalidatePath('/rrr/analytics');
   return { ok: true, moved: data ?? 0 };
 }
