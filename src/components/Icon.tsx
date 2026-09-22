@@ -54,6 +54,7 @@ const paths = {
   ),
   chevron: <path d="m9 5 7 7-7 7" />,
   check: <path d="m5 12 4 4 10-10" />,
+  close: <path d="M6 6l12 12M18 6 6 18" />,
 } as const;
 export type IconName = keyof typeof paths;
 export function Icon({ name }: { name: IconName }) {

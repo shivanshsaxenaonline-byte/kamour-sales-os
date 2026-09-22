@@ -2,59 +2,76 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { loadCustomerHistory, type OrderRow, type CallRow } from './customer-actions';
-import { dayLong as day, money } from './lib/format';
+import { dayInYear as dayShort, istDateFromTimestamp, istToday, money } from './lib/format';
 import { outcomeLabel, outcomeTone } from './lib/outcomes';
 import { useModal } from './lib/use-modal';
 
-/** The date a row actually sits at on the timeline: when the call happened,
- *  or when it is due if it has not happened yet. Ordering and the gaps between
- *  entries both hang off this, so it is one function, not two rules. */
+/**
+ * One customer's story in as few words as a rep can read between two calls:
+ * a summary line to decide on, then one line per real event.
+ *
+ * Most of what the history used to print was the sheet talking to itself.
+ * Imported remarks read "Status | Note | Reminder | Segment | Origin | Called
+ * from" — Status repeats the pill, Called from repeats the header, and the
+ * other three are sheet bookkeeping. Only Note is something a rep wrote, so
+ * that is the only text kept, and only when it adds to the outcome.
+ */
+
+/** When the call happened, or when it is due if it has not. */
 const eventAt = (c: CallRow) => c.completed_at ?? c.due_at;
 
-/** What an entry IS, which is not the same question as what its outcome was.
- *
- *  21,387 of the 22,847 follow-ups in this database are closed with no outcome
- *  — the legacy import and the queue rows whose sheet status carried no signal
- *  ("Others", "Not Contacted"), which import-ai-queue deliberately leaves NULL
- *  with the original text kept in the remark. Reading a missing outcome as
- *  "Pending" told the rep the call had not happened yet when it had, years
- *  ago. A closed follow-up says the call was made; a missing outcome says
- *  nobody wrote down what came of it. Those are two different facts. */
-function entryState(c: CallRow) {
-  if (!c.completed_at) return { label: 'Pending', tone: 'dashed', done: false };
-  if (!c.outcome) return { label: 'No outcome recorded', tone: 'neutral', done: true };
-  return {
-    label: outcomeLabel(c.outcome) ?? c.outcome,
-    tone: outcomeTone(c.outcome),
-    done: true,
-  };
+/** Rows the sheet import made that are not calls: the note left when an order
+ *  synced (the order itself is on the timeline), the course reminder raised
+ *  from its delivery date, and the scheduler's own placeholder. */
+function isNotACall(c: CallRow) {
+  const r = c.remark ?? '';
+  return (c.outcome === 'order_placed' && r.includes('Automatically marked converted'))
+    || r.includes('Course follow-up scheduled')
+    || r.startsWith('Scheduled from latest');
 }
 
-/** The silence between two neighbouring entries, in the words the floor uses.
- *  Three attempts in one afternoon and a three-month gap are the two things
- *  worth seeing instantly, and both are invisible in a list of bare dates. */
-function gapLabel(newer: string, older: string) {
-  const days = Math.round(
-    (new Date(newer).getTime() - new Date(older).getTime()) / 86_400_000);
-  if (days <= 0) return null;                       // same day: no rail break
-  if (days === 1) return { text: '1 day', long: false };
-  // Three weeks is roughly when a course runs down and a customer starts
-  // drifting, so that is where the gap stops being routine and gets coloured.
-  return { text: `${days} days`, long: days > 21 };
+const NOT_PICKED = /^(call\s*)?(not\s*(pick(ed)?(\s*up)?|connected|recei?ve)|no\.?\s*is\s*busy|busy|cx call disconnected|call (cut|disconnected) by customer|customer disconnected the call|not connected the call|not recei?ve the call|number switched\s?off|number out of service)/i;
+
+/** The rep's own words, or null when there are none worth reading. */
+function noteOf(c: CallRow): string | null {
+  if (!c.remark) return null;
+  const parts = c.remark.split(' | ').map((p) => p.trim()).filter(Boolean);
+  const sheet = parts[0]?.startsWith('Status:');
+  const kept = sheet
+    ? parts.filter((p) => p.startsWith('Note:') || p.startsWith('Medicine remaining:'))
+        .map((p) => p.replace(/^Note:\s*/, ''))
+    : parts.filter((p) => !p.startsWith('Completed on selection date'));
+  const text = kept
+    .map((p) => p.replace(/\s*\((Shreyansh|Tejasv|Ashutosh|Nisha|Harshal Deep)\)\s*$/i, '').trim())
+    .filter((p) => p
+      && !/^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(p)            // a bare date
+      && !/^(tejasv|shreyansh|ashutosh|nisha)$/i.test(p))       // a bare name
+    .join(' · ');
+  if (!text) return null;
+  // "Call Not Pick" under a "Call not picked" pill says nothing new.
+  if (NOT_PICKED.test(text) && (!c.outcome || c.outcome === 'no_answer' || c.outcome === 'busy')
+      && text.length < 45) return null;
+  return text;
 }
 
-/** "Gold Plus 30N×1, Power Drive×3" -> one chip per product, counted. */
-function productTotals(orders: OrderRow[]) {
-  const total = new Map<string, number>();
-  for (const o of orders) {
-    if (!o.products) continue;
-    for (const part of o.products.split(', ')) {
-      const m = part.match(/^(.*)×(\d+)$/);
-      if (!m?.[1] || !m[2]) continue;
-      total.set(m[1], (total.get(m[1]) ?? 0) + Number(m[2]));
-    }
-  }
-  return [...total.entries()].sort((a, b) => b[1] - a[1]);
+/** What the line says the call came to. Legacy rows have no outcome but often
+ *  a note that plainly is one ("Call Not Pick"), which is the better label. */
+function resultOf(c: CallRow): { label: string; tone: string } {
+  if (c.outcome === 'order_placed') return { label: 'Rep noted: ordered', tone: 'neutral' };
+  if (c.outcome) return { label: outcomeLabel(c.outcome) ?? c.outcome, tone: outcomeTone(c.outcome) };
+  const raw = (c.remark ?? '').replace(/^Status:\s*[^|]*\|\s*Note:\s*/, '');
+  if (NOT_PICKED.test(raw.trim())) return { label: 'Call not picked', tone: 'attention' };
+  return { label: 'Called', tone: 'neutral' };
+}
+
+type Line =
+  | { key: string; at: string; kind: 'order'; order: OrderRow }
+  | { key: string; at: string; kind: 'call'; label: string; tone: string;
+      who: string | null; note: string | null; count: number; from: string };
+
+function gapText(days: number) {
+  if (days >= 60) return `${Math.round(days / 30)} months gap`;
+  return `${Math.round(days / 7)} weeks gap`;
 }
 
 export function CustomerPanel({
@@ -64,17 +81,16 @@ export function CustomerPanel({
   name: string;
   phone: string;
   onClose: () => void;
-  onLogCall: () => void;
+  onLogCall?: () => void;
 }) {
   const [data, setData] = useState<{ orders: OrderRow[]; calls: CallRow[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Escape, a focus trap and a click on the backdrop — none of which this
-  // aria-modal dialog had.
+  const [showOld, setShowOld] = useState(false);
   const { ref, onBackdropClick } = useModal(onClose);
 
   useEffect(() => {
     let live = true;
-    setData(null); setError(null);
+    setData(null); setError(null); setShowOld(false);
     loadCustomerHistory(customerId).then((r) => {
       if (!live) return;
       if (r.error) setError(r.error);
@@ -83,23 +99,58 @@ export function CustomerPanel({
     return () => { live = false; };
   }, [customerId]);
 
-  const orders = data?.orders ?? [];
-  const ltv = orders.reduce((sum, o) => sum + Number(o.amount), 0);
-  const chips = productTotals(orders);
-  // Orders with no product breakdown exist by the thousand (the source sheet
-  // did not track products before ~Oct 2025), so the chips are labelled as
-  // covering only part of the history rather than silently undercounting.
-  const withoutProducts = orders.filter((o) => !o.products).length;
-  // Newest first by when the call actually HAPPENED, not by when it was due:
-  // the queue's dates and the floor's dates drift apart whenever a rep gets to
-  // a call late, and a timeline sorted by intention rather than by event puts
-  // entries out of order and makes the gaps between them meaningless.
-  const calls = useMemo(
-    () => [...(data?.calls ?? [])].sort(
-      (a, b) => new Date(eventAt(b)).getTime() - new Date(eventAt(a)).getTime()),
-    [data]);
-  const done = calls.filter((c) => c.completed_at).length;
-  const pending = calls.length - done;
+  const view = useMemo(() => {
+    const orders = data?.orders ?? [];
+    const calls = (data?.calls ?? []).filter((c) => !isNotACall(c));
+    const done = calls.filter((c) => c.completed_at);
+    const latestDone = done.reduce((max, c) => (c.completed_at! > max ? c.completed_at! : max), '');
+    // A reminder due before the last call that actually happened was simply
+    // never closed ("Not Contacted" from the sheet); it is not the next call.
+    const pending = calls.filter((c) => !c.completed_at && c.due_at > latestDone)
+      .sort((a, b) => a.due_at.localeCompare(b.due_at));
+    const oldCalls = done.filter((c) => c.kind !== 'order');
+    const shownCalls = showOld ? done : done.filter((c) => c.kind === 'order');
+
+    const events = [
+      ...orders.map((o) => ({ at: o.ordered_on, order: o, call: null as CallRow | null })),
+      ...shownCalls.map((c) => ({ at: eventAt(c), order: null as OrderRow | null, call: c })),
+    ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    // Back-to-back calls with the same result and nothing written fold into
+    // one line: "Call not picked ×3 (02 Aug – 09 Aug)".
+    const lines: Line[] = [];
+    for (const e of events) {
+      if (e.order) {
+        lines.push({ key: `o-${e.order.order_id}`, at: e.at, kind: 'order', order: e.order });
+        continue;
+      }
+      const c = e.call!;
+      const { label, tone } = resultOf(c);
+      const note = noteOf(c);
+      const prev = lines[lines.length - 1];
+      if (prev?.kind === 'call' && prev.label === label && !prev.note && !note) {
+        prev.count += 1;
+        prev.from = e.at;
+        if (prev.who !== c.by_name) prev.who = null;
+        continue;
+      }
+      lines.push({ key: `f-${c.followup_id}`, at: e.at, kind: 'call', label, tone,
+        who: c.by_name, note, count: 1, from: e.at });
+    }
+
+    const lastOrder = orders[0] ?? null;
+    const medicineEnds = lastOrder?.medicine_ends_on
+      ? { on: lastOrder.medicine_ends_on, estimated: !!lastOrder.medicine_ends_estimated }
+      : null;
+    const lastCall = done.filter((c) => c.kind === 'order')
+      .sort((a, b) => eventAt(b).localeCompare(eventAt(a)))[0] ?? null;
+
+    return {
+      orders, lines, oldCount: oldCalls.length, lastOrder, medicineEnds, lastCall,
+      nextCall: pending[0] ?? null,
+      ltv: orders.reduce((sum, o) => sum + Number(o.amount), 0),
+    };
+  }, [data, showOld]);
 
   return (
     <div className="rrr-dialog" onMouseDown={onBackdropClick}>
@@ -110,7 +161,7 @@ export function CustomerPanel({
             <p className="muted">{phone}</p>
           </div>
           <div className="rrr-panel-head-actions">
-            <button type="button" onClick={onLogCall}>Log call</button>
+            {onLogCall ? <button type="button" onClick={onLogCall}>Log call</button> : null}
             <button type="button" onClick={onClose}>Close</button>
           </div>
         </header>
@@ -120,101 +171,84 @@ export function CustomerPanel({
 
         {data ? (
           <>
-            <section className="rrr-panel-section">
-              <h3>
-                Order history · {orders.length} orders · {money(ltv)} LTV
-              </h3>
-              {chips.length ? (
-                <p className="rrr-chips">
-                  {chips.map(([label, n]) => (
-                    <span key={label} className="status-pill neutral">{label} {n}</span>
-                  ))}
-                  {withoutProducts ? (
-                    <span className="muted">
-                      · {withoutProducts} older order{withoutProducts > 1 ? 's' : ''} without a product breakdown
-                    </span>
-                  ) : null}
-                </p>
-              ) : null}
-
-              {orders.length ? (
-                <div className="rrr-panel-scroll">
-                  <table className="records-table rrr-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Products</th>
-                        <th className="num">Amount</th>
-                        <th>Payment</th>
-                        <th>State</th>
-                        <th>Source</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orders.map((o) => (
-                        <tr key={o.order_id}>
-                          <td>{day(o.ordered_on)}</td>
-                          <td>{o.products ?? <span className="muted">Not recorded</span>}</td>
-                          <td className="num">{money(Number(o.amount))}</td>
-                          <td>
-                            {o.payment_mode ?? <span className="muted">—</span>}
-                            <br />
-                            <span className="muted">{o.payment_state}</span>
-                          </td>
-                          <td>{o.ship_state ?? '—'}</td>
-                          <td className="muted">{o.source ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="muted">No orders.</p>}
-            </section>
+            <dl className="rrr-summary">
+              <div>
+                <dt>Last order</dt>
+                <dd>{view.lastOrder
+                  ? <>{dayShort(view.lastOrder.ordered_on)} · {money(Number(view.lastOrder.amount))}</>
+                  : '—'}</dd>
+              </div>
+              <div>
+                <dt>Medicine ends</dt>
+                <dd>{!view.medicineEnds ? '—'
+                  : <>
+                    {view.medicineEnds.on < istToday()
+                      ? <>Ended {dayShort(view.medicineEnds.on)}</>
+                      : dayShort(view.medicineEnds.on)}
+                    {view.medicineEnds.estimated ? ' · est.' : ''}
+                  </>}</dd>
+              </div>
+              <div>
+                <dt>Last call</dt>
+                <dd>{view.lastCall
+                  ? <>{dayShort(eventAt(view.lastCall))} · {resultOf(view.lastCall).label}</>
+                  : 'Not called yet'}</dd>
+              </div>
+              <div>
+                <dt>Next call</dt>
+                <dd>{!view.nextCall ? 'Not scheduled'
+                  : istDateFromTimestamp(view.nextCall.due_at) < istToday()
+                    ? <>Overdue · {dayShort(view.nextCall.due_at)}</>
+                    : dayShort(view.nextCall.due_at)}</dd>
+              </div>
+              <div>
+                <dt>Orders</dt>
+                <dd>{view.orders.length} · {money(view.ltv)}</dd>
+              </div>
+            </dl>
 
             <section className="rrr-panel-section">
-              <h3>
-                Follow-up history · {done} call{done === 1 ? '' : 's'}
-                {/* A scheduled call is not a call that happened. Counting the
-                    two together made the history claim more than it knew. */}
-                {pending ? ` · ${pending} scheduled` : ''}
-              </h3>
-              {calls.length ? (
-                <ol className="rrr-timeline">
-                  {calls.map((c, i) => {
-                    const prev = calls[i - 1];
-                    // The gap belongs above this entry: the list runs newest
-                    // first, so it is the wait between the call above and this
-                    // one. The newest entry has nothing above it.
-                    const gap = prev ? gapLabel(eventAt(prev), eventAt(c)) : null;
-                    const state = entryState(c);
+              {view.lines.length ? (
+                <ol className="rrr-feed">
+                  {view.lines.map((line, i) => {
+                    const prev = view.lines[i - 1];
+                    const days = prev
+                      ? Math.round((new Date(prev.kind === 'call' ? prev.from : prev.at).getTime()
+                          - new Date(line.at).getTime()) / 86_400_000)
+                      : 0;
                     return (
-                      <Fragment key={c.followup_id}>
-                        {gap ? (
-                          <li className="rrr-tl-gap" data-long={gap.long}>
-                            <span>{gap.text}</span>
-                          </li>
-                        ) : null}
-                        <li
-                          className="rrr-tl-item"
-                          data-tone={state.tone}
-                          data-state={state.done ? 'done' : 'pending'}
-                        >
-                          <div className="rrr-timeline-head">
-                            <span className={`status-pill ${state.tone}`}>{state.label}</span>
-                            <span className="muted">
-                              {c.completed_at ? day(c.completed_at) : `Due ${day(c.due_at)}`}
-                              {c.by_name ? ` · ${c.by_name}` : ''}
-                              {c.called_from ? ` · from ${c.called_from}` : ''}
-                              {c.attempt_no > 1 ? ` · attempt ${c.attempt_no}` : ''}
+                      <Fragment key={line.key}>
+                        {days > 21 ? <li className="rrr-feed-gap">{gapText(days)}</li> : null}
+                        {line.kind === 'order' ? (
+                          <li className="rrr-feed-line" data-tone="positive">
+                            <span className="rrr-feed-date">{dayShort(line.order.ordered_on)}</span>
+                            <span>
+                              <strong>Order {line.order.order_no}</strong> · {money(Number(line.order.amount))}
+                              {line.order.products ? <span className="muted"> · {line.order.products}</span> : null}
                             </span>
-                          </div>
-                          {c.remark ? <p className="rrr-timeline-note">{c.remark}</p> : null}
-                        </li>
+                          </li>
+                        ) : (
+                          <li className="rrr-feed-line" data-tone={line.tone}>
+                            <span className="rrr-feed-date">{dayShort(line.at)}</span>
+                            <span>
+                              {line.label}
+                              {line.count > 1 ? <> ×{line.count} <span className="muted">
+                                ({dayShort(line.from)} – {dayShort(line.at)})</span></> : null}
+                              {line.who ? <span className="muted"> · {line.who}</span> : null}
+                              {line.note ? <span className="rrr-feed-note"> “{line.note}”</span> : null}
+                            </span>
+                          </li>
+                        )}
                       </Fragment>
                     );
                   })}
                 </ol>
-              ) : <p className="muted">No calls logged yet.</p>}
+              ) : <p className="muted">No orders or calls yet.</p>}
+              {view.oldCount ? (
+                <button type="button" className="rrr-feed-more" onClick={() => setShowOld((v) => !v)}>
+                  {showOld ? 'Hide old lead calls' : `Show old lead calls (${view.oldCount})`}
+                </button>
+              ) : null}
             </section>
           </>
         ) : null}

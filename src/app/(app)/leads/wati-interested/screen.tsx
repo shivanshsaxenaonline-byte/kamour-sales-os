@@ -147,7 +147,7 @@ export function WatiInterestedScreen({ initialData }: { initialData: WatiInteres
         <div><div className="rz-eyebrow">WATI LEADS</div><h1>Interested <span className="rz-mode">Live</span></h1></div>
         <div className="module-tabs">
           <Link href="/leads/wati-interested" className="active" aria-current="page">Interested leads</Link>
-          <Link href="/leads/wati-interested/analytics">Analytics</Link>
+          <Link href="/rrr/analytics">Analytics</Link>
         </div>
         <button aria-label="Refresh WATI Interested leads" title="Refresh WATI Interested leads" disabled={query.isFetching} onClick={() => void query.refetch()}><Icon name="refresh" /></button>
       </header>

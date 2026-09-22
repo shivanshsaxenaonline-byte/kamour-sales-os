@@ -39,7 +39,8 @@ export function CrmProvider({
         defaultOptions: {
           queries: {
             staleTime: 60000,
-            gcTime: 300000,
+            // Retain visited lists for quick returns; stale data still refreshes on mount.
+            gcTime: 15 * 60_000,
             retry: 1,
             refetchOnWindowFocus: false,
             refetchOnReconnect: false,

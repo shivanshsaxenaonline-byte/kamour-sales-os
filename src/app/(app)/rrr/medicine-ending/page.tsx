@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import type { ContactNumber } from '../log-call-dialog';
-import { addDaysIso, daysBetween, istDateFromTimestamp, istToday } from '../lib/format';
+import { addDaysIso, courseDays, daysBetween, istDateFromTimestamp, istToday } from '../lib/format';
 import { MedicineEndingTable, type MedicineEndingRow } from './medicine-ending-table';
 
 const CAN_ASSIGN = ['admin', 'ceo', 'coo', 'auditor'];
@@ -16,6 +16,7 @@ const COLUMNS = `
   course_duration_days,
   delivered_at,
   created_at,
+  order_items(products(default_course_days)),
   customers!inner(full_name, phone_e164, is_dnd, merged_into_id)
 `;
 
@@ -27,6 +28,7 @@ type RawOrder = {
   course_duration_days: number | null;
   delivered_at: string | null;
   created_at: string;
+  order_items: { products: { default_course_days: number | null } | null }[];
   customers: {
     full_name: string;
     phone_e164: string;
@@ -66,7 +68,13 @@ export default async function MedicineEndingPage() {
       .select(COLUMNS)
       .eq('stage', 'delivered')
       .not('delivered_at', 'is', null)
-      .in('course_duration_days', [15, 30])
+      // No course filter here any more. It used to read
+      // .in('course_duration_days', [15, 30]), which threw away every order
+      // whose duration the sheet never carried — and of those that do carry
+      // one, 232 carry a 15 against a 60N box, so the column could not be
+      // trusted to band the list either. The length is decided from the
+      // tablets below; the whole delivered set is 131 rows, so nothing here
+      // needs narrowing.
       .order('delivered_at', { ascending: false })
       .limit(750),
     // Every order of any stage from the last four months, to answer one
@@ -129,6 +137,12 @@ export default async function MedicineEndingPage() {
       .limit(3000),
   ]);
 
+  // The longest course among the tablets in the parcel: 60N a month, 30N a
+  // fortnight. Accessories (Power Drive, Boost Up Oil, Shilajit) carry no
+  // course of their own and so cannot shorten one.
+  const tabletDays = (o: RawOrder) =>
+    Math.max(0, ...(o.order_items ?? []).map((i) => i.products?.default_course_days ?? 0)) || null;
+
   if (orders.error) {
     return (
       <section className="data-grid">
@@ -154,6 +168,28 @@ export default async function MedicineEndingPage() {
   for (const item of work.data ?? [])
     if (item.customer_id && item.last_called_at
       && istDateFromTimestamp(item.last_called_at) >= yesterday) calledSince.add(item.customer_id);
+
+  // A call already booked for a later day.
+  //
+  // `calledSince` covers two days, which is right for "we spoke, let them be"
+  // but wrong for a promise with a date on it. A customer who said on the 16th
+  // that he has nine days of medicine left has a call booked for the 25th; on
+  // the 18th this list raised him again, Alka assigned him, and the assignment
+  // reset the task to due-today and wiped the outcome off it — so the rep saw
+  // "Not called yet" on a customer he had marked two days earlier, about a
+  // course still in the man's hands. That is the complaint this fixes at
+  // source; fn_assign_rrr_work no longer erases the date either.
+  //
+  // Only dates in the future count. A task due today is today's work and
+  // belongs on this screen, assignment state and all.
+  const bookedAhead = new Set<string>();
+  for (const item of work.data ?? [])
+    if (item.customer_id && !item.completed_at && item.due_on > today)
+      bookedAhead.add(item.customer_id);
+  for (const followup of openFollowups.data ?? [])
+    if (followup.customer_id && followup.due_at
+      && istDateFromTimestamp(followup.due_at) > today)
+      bookedAhead.add(followup.customer_id);
 
   // What the customer themselves said.
   //
@@ -245,21 +281,28 @@ export default async function MedicineEndingPage() {
   const rows = ((orders.data ?? []) as unknown as RawOrder[])
     .filter((o) => {
       const customer = o.customers;
-      if (!customer || customer.merged_into_id || !o.delivered_at || !o.course_duration_days)
-        return false;
+      if (!customer || customer.merged_into_id || !o.delivered_at) return false;
       if (!currentCourse.has(o.id)) return false;
       if (hasReordered(o.customer_id, o.created_at)) return false;
+      if (bookedAhead.has(o.customer_id)) return false;
       return !calledSince.has(o.customer_id);
     })
     .map((o): MedicineEndingRow => {
       const customer = o.customers!;
       const deliveredOn = istDateFromTimestamp(o.delivered_at!);
+      // The tablets decide the course, not the sheet's own column — see
+      // courseDays(). This screen and the AI list now read the same number off
+      // the same order.
+      const course = courseDays({
+        course_duration_days: o.course_duration_days,
+        tablet_course_days: tabletDays(o),
+      });
       // addDaysIso, not Date.setDate(): the previous helper stepped the
       // machine's local calendar and then read the result back as a UTC day,
       // which put every single course end one day early — a 15-day course
       // delivered on the 1st ended on the 15th instead of the 16th, and the
       // whole "ends today / 3d left / overdue" banding was shifted with it.
-      const estimatedEnd = addDaysIso(deliveredOn, o.course_duration_days!);
+      const estimatedEnd = addDaysIso(deliveredOn, course);
       // Later of the two, never earlier: a customer who is running behind on
       // their course has more medicine left than the calendar says, and the
       // call is the only thing that knows it.
@@ -273,7 +316,7 @@ export default async function MedicineEndingPage() {
         phone_e164: customer.phone_e164,
         is_dnd: customer.is_dnd,
         amount: Number(o.amount),
-        course_duration_days: o.course_duration_days!,
+        course_duration_days: course,
         delivered_on: deliveredOn,
         ends_on: endsOn,
         ends_on_stated: endsOn === stated && stated !== estimatedEnd,

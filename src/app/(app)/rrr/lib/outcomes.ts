@@ -31,10 +31,19 @@ type Input = {
 type Outcome = { label: string; tone: OutcomeTone; input?: Input };
 
 /** Keyed by the value stored in followups.outcome (the nine migration 024
- *  allows). Order is the order the dialog shows its buttons in. */
+ *  allows, plus the `other` added by 20260918113000). Order is the order the
+ *  dialog shows its buttons in. */
 const OUTCOME_DEFINITIONS = {
   order_placed: {
     label: 'Order placed', tone: 'positive',
+    // The one outcome that ends the chain instead of extending it, so it has
+    // no next date: the order itself schedules the next call, when Medicine
+    // Ending sees the new course running out. A date here would put the
+    // customer back on a list this week about a course they just replaced.
+    // The note is compulsory because this is the number the whole programme
+    // is measured on — a claim that money came in, made hours before the
+    // Medicine Order sheet can confirm it, has to say what was ordered.
+    input: { alias: 'order_placed', label: 'Order placed', hint: 'Kya order hua likhein · task band', days: null },
   },
   will_buy: {
     label: 'Interested', tone: 'positive',
@@ -73,6 +82,16 @@ const OUTCOME_DEFINITIONS = {
   connected: {
     label: 'Baat hui', tone: 'positive',
     input: { alias: 'connected', label: 'Baat hui', hint: 'Kab batayenge? Date chunein', days: null },
+  },
+  other: {
+    label: 'Other', tone: 'neutral',
+    // For the call that fits none of the buttons above — shifted city, in
+    // hospital, family function, asked for a different product. Picking the
+    // least wrong button used to put a lie in this column and the truth in the
+    // note, so the note is compulsory here and the outcome is honest instead.
+    // Tomorrow, like Interested: whatever was said has to be read by somebody
+    // the next morning rather than kept in one rep's head.
+    input: { alias: 'other', label: 'Other', hint: 'Note likhein · kal follow-up', days: 1 },
   },
   // Legacy and import-only: the column holds it and the timeline must paint
   // it, but the dialog folds "busy" into "call not picked", so there is no

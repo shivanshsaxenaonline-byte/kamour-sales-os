@@ -1,0 +1,89 @@
+.loading-bar {
+  display: block;
+  height: 9px;
+  max-width: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--border) 0%, var(--hover) 44%, var(--border) 88%);
+  background-size: 240% 100%;
+  animation: loading-shimmer 1.35s ease-in-out infinite;
+}
+.loading-bar-title { height: 14px; }
+.loading-bar-lg { height: 20px; }
+.page-skeleton {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface);
+}
+.loading-toolbar {
+  min-height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.loading-push { margin-left: auto; }
+.loading-table { flex: 1; min-height: 0; overflow: hidden; }
+.loading-row {
+  min-height: var(--row-h);
+  display: grid;
+  grid-template-columns: 1.25fr 1.1fr 0.9fr 1fr 0.8fr 1fr 0.9fr;
+  align-items: center;
+  gap: 20px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.loading-row-head { min-height: var(--header-h); background: var(--bg); }
+.loading-row-head .loading-bar { height: 8px; }
+.loading-footer {
+  min-height: var(--footer-h);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.loading-workspace { height: 100dvh; overflow: hidden; background: var(--bg); }
+.loading-windowbar {
+  height: var(--titlebar-h);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.loading-shell { height: calc(100dvh - var(--titlebar-h)); display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+.loading-sidebar { display: flex; flex-direction: column; gap: 20px; padding: 16px 12px 12px; border-right: 1px solid var(--border); }
+.loading-brand { display: flex; align-items: center; gap: 9px; min-height: 34px; }
+.loading-brand-mark { width: 28px !important; height: 28px; border-radius: 4px; }
+.loading-nav { display: grid; gap: 19px; padding: 4px 6px; }
+.loading-nav-bottom { margin-top: auto; }
+.loading-login { min-height: 100dvh; display: grid; place-items: center; padding: 20px; background: var(--bg); }
+.loading-login-card { width: min(320px, 100%); display: grid; gap: 12px; padding: 24px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.loading-login-fields { display: grid; gap: 12px; margin-top: 8px; }
+.loading-login-fields .loading-bar { height: 38px; }
+.loading-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.loading-metric { display: grid; gap: 11px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+@keyframes loading-shimmer { to { background-position: -240% 0; } }
+.navigation-progress { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 1000; overflow: hidden; pointer-events: none; background: var(--accent-bg); }
+.navigation-progress::after { content: ''; display: block; height: 100%; width: 35%; background: var(--accent); animation: navigation-slide 1s ease-in-out infinite; }
+.navigation-pending-dot { flex-shrink: 0; width: 10px; height: 10px; margin-left: auto; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: login-spin 650ms linear infinite; }
+a:has(> .navigation-pending-dot) { background: var(--accent-bg); }
+@keyframes navigation-slide { from { transform: translateX(-100%); } to { transform: translateX(390%); } }
+@media (max-width: 760px) {
+  .loading-shell { grid-template-columns: 1fr; }
+  .loading-sidebar { display: none; }
+  .loading-row { grid-template-columns: 1.2fr 1fr 0.8fr; }
+  .loading-row .loading-bar:nth-child(n + 4) { display: none; }
+  .loading-toolbar .loading-bar:nth-child(2),
+  .loading-toolbar .loading-bar:nth-child(3) { display: none; }
+  .loading-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-bar { animation: none; background: var(--border); }
+}

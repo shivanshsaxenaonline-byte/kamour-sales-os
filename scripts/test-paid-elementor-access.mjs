@@ -19,10 +19,10 @@ function setup({user={id:'viewer'},profile={role:'sales_exec',is_active:true},le
 test('unauthenticated, inactive and unauthorized roles never query private payments',async()=>{
   for(const opts of [{user:null},{profile:{role:'admin',is_active:false}},{profile:{role:'ops',is_active:true}}]){const s=setup(opts);await assert.rejects(s.run());assert.equal(s.privileged(),0);}
 });
-test('no candidate payments returns an empty paged result',async()=>{const s=setup();assert.equal(JSON.stringify(await s.run({start:'2026-09-11',end:'2026-09-11'})),JSON.stringify({rows:[],total:0,totalPayments:0,totalZohoLeads:0}));assert.equal(s.privileged(),1);});
+test('no candidate payments returns an empty infinite-scroll result',async()=>{const s=setup();assert.equal(JSON.stringify(await s.run({start:'2026-09-11',end:'2026-09-11'})),JSON.stringify({rows:[],nextOffset:null}));assert.equal(s.privileged(),1);});
 test('only RLS-visible Zoho CRM leads determine payment phone scope',async()=>{
   const s=setup({leads:[{id:'lead1',customer_id:'a',created_at:'2026-09-11T00:00:00Z'}],identities:[{customer_id:'a'},{customer_id:'b'}],customers:[{id:'a',full_name:'A',phone_e164:'+919999999999'},{id:'b',full_name:'B',phone_e164:'+918888888888'}],payments:[{id:'pay1',phone_e164:'+919999999999',amount:99,amount_refunded:0,paid_at:'2026-09-11T02:00:00Z'},{id:'pay2',phone_e164:'+918888888888',amount:99,amount_refunded:0,paid_at:'2026-09-11T03:00:00Z'}]});
-  const result=await s.run({start:'2026-09-11',end:'2026-09-11'});assert.equal(result.rows.length,1);assert.equal(result.total,1);assert.equal(result.rows[0].customer_id,'a');assert.equal(result.rows[0].lead_ids[0],'lead1');
+  const result=await s.run({start:'2026-09-11',end:'2026-09-11'});assert.equal(result.rows.length,1);assert.equal(result.rows[0].customer_id,'a');assert.equal(result.rows[0].lead_id,'lead1');assert.equal(result.rows[0].payment_id,'pay1');
   const lead=s.calls.find(c=>c.table==='leads');assert.ok(lead.filters.some(f=>JSON.stringify(f)===JSON.stringify(['eq','channel','zoho_legacy'])));assert.equal(JSON.stringify(lead.filters.find(f=>f[0]==='in')),JSON.stringify(['in','customer_id',['a','b']]));
   const identity=s.calls.find(c=>c.table==='customer_identities');assert.ok(identity.service);assert.ok(identity.filters.some(f=>JSON.stringify(f)===JSON.stringify(['eq','system','zoho'])));
   const payment=s.calls.find(c=>c.table==='razorpay_payments');

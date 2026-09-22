@@ -1,0 +1,7 @@
+.env*
+backups/
+data/
+exports/
+docs/
+/supabase/
+*.csv

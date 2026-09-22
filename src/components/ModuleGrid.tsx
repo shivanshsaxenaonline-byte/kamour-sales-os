@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataGrid, type GridColumn } from "./grid/DataGrid";
 import { RecordPanel } from "./grid/RecordPanel";
 import { RecordEditor } from "./grid/RecordEditor";
@@ -44,6 +44,56 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
     [localChange, setLocalChange] = useState(false);
   const [savedFilter, setSavedFilter] = useState("");
   const live = useLiveUpdates(viewer, module);
+  const hasLiveSheet = module === "orders" || module === "consultation";
+  const sheetSync = useQuery({
+    queryKey: ["sheet-sync", module, viewer.id],
+    enabled: hasLiveSheet && !!viewer.id,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const endpoint =
+        module === "consultation"
+          ? "/api/sheets/consultations/sync"
+          : "/api/sheets/orders/sync";
+      const response = await fetch(endpoint, { method: "POST" });
+      const result = (await response.json()) as {
+        ok: boolean;
+        locked?: boolean;
+        created?: number;
+        updated?: number;
+        finishedAt?: string;
+        error?: string;
+      };
+      if (!response.ok && response.status !== 202)
+        throw new Error(result.error ?? `${module} Sheet sync failed`);
+      return result;
+    },
+  });
+  const sheetChanges =
+    (sheetSync.data?.created ?? 0) + (sheetSync.data?.updated ?? 0);
+  useEffect(() => {
+    // A sync that changed nothing must not reload the grid it just rendered.
+    if (!sheetSync.data?.finishedAt || !sheetChanges) return;
+    void client.invalidateQueries({ queryKey: ["crm", viewer.id, "list"] });
+    void client.invalidateQueries({ queryKey: ["crm", viewer.id, "counts"] });
+  }, [client, sheetSync.data?.finishedAt, sheetChanges, viewer.id]);
+  useEffect(() => {
+    // Sheet-backed modules apply live changes on their own; the others only
+    // flag them, because their ordering can shift under the rep mid-call.
+    if (!hasLiveSheet || !live.pending || editing) return;
+    const timer = window.setTimeout(async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["crm", viewer.id, "list"] }),
+        client.invalidateQueries({ queryKey: ["crm", viewer.id, "counts"] }),
+        client.invalidateQueries({ queryKey: ["crm", viewer.id, "detail"] }),
+      ]);
+      setPatches({});
+      setLocalChange(false);
+      live.clear();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [client, editing, hasLiveSheet, live.clear, live.pending, viewer.id]);
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebounced(search);
@@ -115,7 +165,8 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
   function startEdit(row: CrmRow) {
     if (!canEditEntity(viewer.role, entityFor(module, row))) return;
     setEditing(row.id);
-    if (module === "today" || module === "consultation") setExpanded(row.id);
+    if (module === "today" || module === "consultation" || module === "orders")
+      setExpanded(row.id);
   }
   function doneEdit() {
     setEditing(null);
@@ -350,6 +401,13 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
     ...(module === "orders"
       ? [
           {
+            id: "ordered",
+            label: "Ordered",
+            width: 112,
+            sortKey: "created_at",
+            render: (r: CrmRow) => dateLabel(r.created_at),
+          },
+          {
             id: "amount",
             label: "Amount",
             width: 104,
@@ -357,6 +415,13 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
             render: (r: CrmRow) => (
               <span className="money">{money(r.amount)}</span>
             ),
+          },
+          {
+            id: "source",
+            label: "Source",
+            width: 106,
+            defaultHidden: true,
+            render: (r: CrmRow) => r.source ?? "—",
           },
           {
             id: "stage",
@@ -380,26 +445,21 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
             id: "awb",
             label: "Tracking",
             width: 160,
-            render: (r: CrmRow) =>
-              editing === r.id ? (
-                <RecordEditor
-                  row={r}
-                  entity="order"
-                  inline
-                  onPatch={(patch) => patchRow(r.id, patch)}
-                  onDone={doneEdit}
-                  onCancel={() => setEditing(null)}
-                />
-              ) : (
-                <button
-                  className="editable-cell"
-                  disabled={!canEditEntity(viewer.role, "order")}
-                  onClick={() => startEdit(r)}
-                  title="Edit tracking number · E"
-                >
-                  {r.awb ?? "Add tracking"}
-                </button>
-              ),
+            render: (r: CrmRow) => (
+              <button
+                className="editable-cell"
+                onClick={() => open(r)}
+                title="Open order details"
+              >
+                {r.awb ?? "Not recorded"}
+              </button>
+            ),
+          },
+          {
+            id: "delivered",
+            label: "Delivered",
+            width: 112,
+            render: (r: CrmRow) => dateLabel(r.delivered_at),
           },
           {
             id: "course",
@@ -451,18 +511,13 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
         editingColumnId={
           module === "leads"
             ? "status"
-            : module === "orders"
-              ? "awb"
-              : undefined
+            : undefined
         }
         renderDetail={(row) => (
           <RecordPanel
             row={row}
             entity={entityFor(module, row)}
-            editing={
-              editing === row.id &&
-              (module === "today" || module === "consultation")
-            }
+            editing={editing === row.id}
             onEdit={() => startEdit(row)}
             onClose={() => {
               setExpanded(null);
@@ -516,24 +571,42 @@ export function ModuleGrid({ module }: { module: ModuleName }) {
           </>
         }
         filters={
-          <button
-            className="icon-button"
-            aria-label="Saved filters"
-            title="Saved filters"
-            onClick={() => saved.current?.showModal()}
-            disabled={!!editing}
-          >
-            <svg
-              className="crm-icon"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              aria-hidden="true"
+          <>
+            {hasLiveSheet ? (
+              <span
+                className={sheetSync.error ? "sheet-sync-status error" : "sheet-sync-status"}
+                title={sheetSync.error?.message ?? "Google Sheet is synced into Supabase"}
+              >
+                {sheetSync.isFetching
+                  ? "Syncing sheet..."
+                  : sheetSync.error
+                    ? "Sheet sync issue"
+                    : sheetSync.data?.locked
+                      ? "Sheet current"
+                      : sheetSync.data?.finishedAt
+                        ? `Sheet live${sheetSync.data.created || sheetSync.data.updated ? ` · ${(sheetSync.data.created ?? 0) + (sheetSync.data.updated ?? 0)} changed` : ""}`
+                        : "Sheet pending"}
+              </span>
+            ) : null}
+            <button
+              className="icon-button"
+              aria-label="Saved filters"
+              title="Saved filters"
+              onClick={() => saved.current?.showModal()}
+              disabled={!!editing}
             >
-              <path d="M6 3h12v18l-6-4-6 4V3Z" />
-            </svg>
-          </button>
+              <svg
+                className="crm-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                aria-hidden="true"
+              >
+                <path d="M6 3h12v18l-6-4-6 4V3Z" />
+              </svg>
+            </button>
+          </>
         }
         emptyTitle={
           module === "today"

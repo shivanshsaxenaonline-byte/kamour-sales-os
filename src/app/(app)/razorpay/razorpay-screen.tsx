@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useViewer } from '@/components/CrmProvider';
 import { Icon } from '@/components/Icon';
+import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { createClient } from '@/lib/supabase/client';
 import { consultationIndex, consultationMatches, isConsultationPayment } from '@/lib/razorpay/analytics';
 import { ConsultationCandidates, useConsultationMatches } from './consultation-matching';
@@ -116,7 +117,7 @@ export function RazorpayScreen() {
     </form>
     <nav className="rz-tabs" aria-label="Razorpay views">{['overview', 'payments', 'monthly'].map(t => <button key={t} aria-current={tab === t ? 'page' : undefined} onClick={() => setTab(t)}>{t === 'monthly' ? 'Monthly report' : t === 'payments' ? 'Payments' : 'Overview'}</button>)}</nav>
     <div className="rz-body" aria-busy={payments.isFetching}>
-      {payments.isError ? <div className="rz-error" role="alert">Unable to load payments: {payments.error.message} <button onClick={() => void payments.refetch()}>Retry</button></div> : payments.isPending ? <div className="rz-loading" role="status">Loading Razorpay payments...</div> : <>
+      {payments.isError ? <div className="rz-error" role="alert">Unable to load payments: {payments.error.message} <button onClick={() => void payments.refetch()}>Retry</button></div> : payments.isPending ? <TableSkeleton rows={8} columns={7} metrics label="Loading Razorpay payments" /> : <>
       {tab === 'overview' && <>
         <section className="rz-metrics" aria-label="Payment metrics">{metrics.map(([label, value, note, tone]) => <article className={'rz-metric ' + tone} key={label}><h2>{label}</h2><strong>{value}</strong><p>{note}</p></article>)}</section>
         <section className="rz-analysis">

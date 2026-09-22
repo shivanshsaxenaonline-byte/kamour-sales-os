@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { ModuleName, Viewer } from "@/types/crm";
 
@@ -12,6 +12,9 @@ export function useLiveUpdates(viewer: Viewer, module: ModuleName) {
     setStatus("Connecting");
     const client = createClient(),
       channel = client.channel(`crm:${viewer.id}:${module}`);
+    const seesAll = ["admin", "ceo", "coo", "sales_manager", "auditor"].includes(
+      viewer.role,
+    );
     const subscriptions =
       module === "today"
         ? [
@@ -21,8 +24,8 @@ export function useLiveUpdates(viewer: Viewer, module: ModuleName) {
         : module === "leads"
           ? [["leads", "owner_id"]]
           : module === "orders"
-            ? [["orders", "current_owner_id"]]
-            : [["consultations", "doctor_id"]];
+            ? [["orders", seesAll || viewer.role === "ops" ? null : "current_owner_id"]]
+            : [["consultations", seesAll ? null : "doctor_id"]];
     for (const [table, column] of subscriptions)
       channel.on(
         "postgres_changes",
@@ -30,7 +33,7 @@ export function useLiveUpdates(viewer: Viewer, module: ModuleName) {
           event: "*",
           schema: "public",
           table: table!,
-          filter: `${column}=eq.${viewer.id}`,
+          ...(column ? { filter: `${column}=eq.${viewer.id}` } : {}),
         },
         () => setPending(true),
       );
@@ -46,6 +49,7 @@ export function useLiveUpdates(viewer: Viewer, module: ModuleName) {
     return () => {
       void client.removeChannel(channel);
     };
-  }, [viewer.id, module]);
-  return { pending, status, clear: () => setPending(false) };
+  }, [viewer.id, viewer.role, module]);
+  const clear = useCallback(() => setPending(false), []);
+  return { pending, status, clear };
 }

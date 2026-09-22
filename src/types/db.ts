@@ -29,8 +29,8 @@ export interface AppUser {
 
 /** Where each role lands after signing in. */
 export const HOME_FOR_ROLE: Record<UserRole, string> = {
-  sales_exec: '/today',
-  sales_manager: '/today',
+  sales_exec: '/rrr/my',
+  sales_manager: '/rrr/my',
   doctor: '/consultation',
   ops: '/orders',
   coo: '/orders',

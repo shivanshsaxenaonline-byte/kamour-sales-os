@@ -64,19 +64,12 @@ export const MODULES = {
     title: "Orders",
     subtitle: "From confirmation to delivery.",
     view: "v_orders_list",
-    defaultTab: "pending_confirm",
+    defaultTab: "all",
     sort: "created_at",
     ascending: false,
     columns:
-      "id,order_no,customer_id,full_name,phone,amount,discount,stage,payment_state,payment_mode,courier,awb,dispatch_date,course_duration_days,next_followup_at,is_repeat,current_owner_id,owner_name,created_at",
-    tabs: [
-      { id: "pending_confirm", label: "Pending confirm" },
-      { id: "confirmed", label: "Confirmed" },
-      { id: "dispatched", label: "Dispatched" },
-      { id: "delivered", label: "Delivered" },
-      { id: "rto", label: "RTO" },
-      { id: "cancelled", label: "Cancelled" },
-    ],
+      "id,order_no,customer_id,full_name,phone,amount,discount,shipping_amount,stage,payment_state,payment_mode,courier,awb,dispatch_date,delivered_at,course_duration_days,next_followup_at,is_repeat,current_owner_id,owner_name,source,created_at",
+    tabs: [{ id: "all", label: "All orders" }],
     sortKeys: [
       "order_no",
       "full_name",
@@ -120,7 +113,7 @@ export const DETAIL_COLUMNS: Record<EntityName, string> = {
   consultation:
     "id,customer_id,doctor_id,state,scheduled_at,completed_at,notes,cancel_reason_id,fee_state,fee_amount,updated_at",
   order:
-    "id,customer_id,stage,amount,discount,ship_name,ship_address,ship_pincode,ship_city,ship_state,awb,courier_id,dispatch_date,course_duration_days,next_followup_at,updated_at",
+    "id,customer_id,consultation_id,stage,payment_state,payment_mode_id,source_id,amount,discount,shipping_amount,cod_amount,ship_name,ship_address,ship_pincode,ship_city,ship_state,awb,courier_id,dispatch_date,delivered_at,rto_at,course_duration_days,next_followup_at,is_repeat,order_notes,ad_code,gclid,created_at,updated_at",
   followup:
     "id,customer_id,kind,due_at,outcome,remark,next_due_at,completed_at,order_id,lead_id,owner_id,updated_at",
 };
@@ -145,6 +138,10 @@ export function dateLabel(
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
+  // Sheet imports only know the day and store it as midnight IST. A time of
+  // exactly 00:00 is therefore "no time recorded", not a midnight booking.
+  if (includeTime && (date.getTime() + 5.5 * 3_600_000) % 86_400_000 === 0)
+    includeTime = false;
   return new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata",
     day: "2-digit",

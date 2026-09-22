@@ -20,6 +20,10 @@ const DAY_MS = 86_400_000;
 export const istToday = () =>
   new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 
+/** IST calendar date of a stored timestamp (which is serialized in UTC). */
+export const istDateFromTimestamp = (timestamp: string) =>
+  new Date(new Date(timestamp).getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+
 /** An IST calendar day `n` days from today. Used for the next-follow-up date a
  *  call outcome suggests, which must be the rep's tomorrow, not the server's. */
 export const istTodayPlus = (n: number) =>
@@ -41,6 +45,59 @@ export const istMidnight = (iso: string) => new Date(`${iso}T00:00:00+05:30`).ge
 export const addDaysIso = (iso: string, n: number) =>
   new Date(istMidnight(iso) + n * DAY_MS + IST_OFFSET_MS).toISOString().slice(0, 10);
 
+/** The parcel takes about a week to arrive, and nobody takes a tablet they
+ *  have not received. Median 6 days, mean 7.0, over the 130 delivered orders
+ *  carrying both dates. Must agree with v_delivery_lag in
+ *  fn_generate_ai_daily_leads and with course_started_on in
+ *  v_rrr_customer_orders. */
+export const DELIVERY_LAG_DAYS = 7;
+
+/** A course nobody recorded and whose parcel held no tablets we know. Fifteen
+ *  days, because that is what 441 of the 741 orders carrying both a duration
+ *  and a tablet row turn out to be. */
+export const FALLBACK_COURSE_DAYS = 15;
+
+/**
+ * How long the medicine in a customer's hands is meant to last.
+ *
+ * The tablets decide it: 60N is a month, 30N a fortnight
+ * (products.default_course_days, surfaced as tablet_course_days). The sheet's
+ * own course_duration_days is second, not first — 232 orders carry a recorded
+ * 15 against a 60N box, typed by habit, and a fortnight's clock on a month's
+ * medicine is a call two weeks early.
+ */
+export const courseDays = (o: {
+  tablet_course_days?: number | null;
+  course_duration_days: number | null;
+}) => o.tablet_course_days || o.course_duration_days || FALLBACK_COURSE_DAYS;
+
+/**
+ * When an order's medicine runs out.
+ *
+ * The day the course started plus its length, where the course starts on the
+ * delivery date — not the order date. Two stand-ins for what the order may not
+ * record: delivery is taken as DELIVERY_LAG_DAYS after the order, and a course
+ * nobody can pin down as FALLBACK_COURSE_DAYS. `estimated` is true whenever
+ * either was used, so a screen can mark the date as a guess.
+ *
+ * Prefer `medicine_ends_on` off v_rrr_customer_orders where the row came from
+ * that view; this is the same arithmetic for callers that only have the order.
+ */
+export function medicineEnds(o: {
+  ordered_on: string | null;
+  delivered_on: string | null;
+  course_duration_days: number | null;
+  tablet_course_days?: number | null;
+}): { on: string; estimated: boolean } | null {
+  const started = o.delivered_on?.slice(0, 10)
+    ?? (o.ordered_on ? addDaysIso(o.ordered_on.slice(0, 10), DELIVERY_LAG_DAYS) : null);
+  if (!started) return null;
+  return {
+    on: addDaysIso(started, courseDays(o)),
+    estimated: !o.delivered_on || !(o.tablet_course_days || o.course_duration_days),
+  };
+}
+
 /** Whole IST days from `from` to `to`, positive when `to` is later. */
 export const daysBetween = (from: string, to: string) =>
   Math.round((istMidnight(to) - istMidnight(from)) / DAY_MS);
@@ -49,13 +106,40 @@ export const daysBetween = (from: string, to: string) =>
 export const money = (n: number | null | undefined) =>
   n == null ? '—' : '₹' + Math.round(Number(n)).toLocaleString('en-IN');
 
-/** "12 Sep" — for dense table cells. */
+/** "12 Sep" — for dense table cells. A full timestamp is read as the IST day
+ *  it happened on; slicing its UTC date put every evening-IST call a day early. */
 export const dayShort = (iso: string | null) =>
   iso
-    ? new Date(istMidnight(iso.slice(0, 10))).toLocaleDateString('en-IN', {
+    ? new Date(iso.length > 10 ? iso : istMidnight(iso)).toLocaleDateString('en-IN', {
         day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata',
       })
     : '—';
+
+/** "12 Sep" this year, "31 Oct 2025" otherwise — so a history spanning years
+ *  does not read as if October came after June. */
+export const dayInYear = (iso: string | null) => {
+  if (!iso) return '—';
+  const day = iso.length > 10 ? istDateFromTimestamp(iso) : iso;
+  return day.slice(0, 4) === istToday().slice(0, 4)
+    ? dayShort(day)
+    : `${dayShort(day)} ${day.slice(0, 4)}`;
+};
+
+/** "12 Sep", or "12 Sep 2025" when `withYear`.
+ *
+ *  For a pair of dates that belong to one row. dayInYear() decides per date,
+ *  which is right in isolation and wrong side by side: a row reading
+ *  "30 Dec 2025 → ends 5 Feb" leaves the reader to guess which February, and
+ *  the answer is not the one the missing year suggests. The caller works out
+ *  whether ANY date in the row falls outside this year, and prints them all
+ *  the same way. */
+export const dayMaybeYear = (iso: string | null, withYear: boolean) =>
+  !iso ? '—' : withYear ? `${dayShort(iso)} ${(iso.length > 10 ? istDateFromTimestamp(iso) : iso).slice(0, 4)}` : dayShort(iso);
+
+/** Whether a date falls outside the current IST year — the test the caller
+ *  needs to decide dayMaybeYear()'s second argument for a whole row. */
+export const isOtherYear = (iso: string | null) =>
+  !!iso && (iso.length > 10 ? istDateFromTimestamp(iso) : iso).slice(0, 4) !== istToday().slice(0, 4);
 
 /** "12 Sep 2026" — for panels, where the year matters. */
 export const dayLong = (iso: string | null) =>

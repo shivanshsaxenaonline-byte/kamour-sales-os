@@ -1,14 +1,14 @@
 'use client';
 
-import Link from 'next/link';
+import { DashboardLink as Link } from '@/components/DashboardLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { assignRrr } from './actions';
+import { assignRrr, assignRrrWork } from './actions';
 import { refreshAiLeads } from './ai-leads-actions';
 import { resolveMatchingIds } from './select-all-action';
 import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
 import { CustomerPanel } from './customer-panel';
-import { dayShort, digitsOf, initials, money, timeLabel } from './lib/format';
+import { dayInYear, dayMaybeYear, dayShort, daysBetween, digitsOf, istDateFromTimestamp, initials, isOtherYear, money, timeLabel } from './lib/format';
 import { outcomeLabel, outcomeTone } from './lib/outcomes';
 import {
   ACTIVITIES, DND_OPTIONS, NO_FILTERS, OUTCOME_OPTIONS, PAYMENTS, PRESETS, SORTS, STAGES, TYPES,
@@ -49,28 +49,25 @@ export type AiLeadRow = RrrRow & {
   reason: string | null;
   ai_owner_id: string | null;
   ai_owner_name: string | null;
+  /** Filled in by the screen after the list loads, not by the view. */
+  last_order_products?: string | null;
+  medicine_ends_on?: string | null;
+  /** Delivery date or course length was missing, so a stand-in was used. */
+  medicine_ends_estimated?: boolean;
 };
 
 export type AiRun = { run_on: string; generated_at: string; total: number };
 
 export type Rep = { id: string; full_name: string; role: string };
-
-// The five buckets migration 028 seeds into ai_lead_rules. The label comes
-// from the database (bucket_label) so a renamed rule needs no deploy; only the
-// colour lives here, because a colour is a UI decision.
-const BUCKET_TONE: Record<string, string> = {
-  // 029's mix, in the order the numbers put them.
-  refill: 'positive',            // the course is running out — the band that pays
-  retry: 'attention-outline',    // did not pick up, second attempt
-  overdue: 'critical',           // a date already promised to the customer
-  topbook: 'positive-outline',   // top 10% by lifetime value, on a cycle
-  slipping: 'attention',
-  cooling: 'neutral',
-  revival: 'dashed',
-  // 028's codes, kept so a list generated before 029 still paints correctly.
-  kamour: 'positive-outline',
-  active: 'positive',
-  dormant: 'neutral',
+export type WorkAssignment = {
+  customer_id: string;
+  source: 'ai' | 'medicine_ending' | 'due';
+  assigned_to: string | null;
+  assigned_at: string | null;
+  due_on: string;
+  last_outcome: string | null;
+  medicine_days_left: number | null;
+  completed_at: string | null;
 };
 
 /** Active if they bought within 90 days — the same line the team's own
@@ -103,7 +100,8 @@ function followUpState(r: RrrRow, today: string) {
 const TYPING = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 
 export function RrrTable({
-  mode, rows, aiLeads, filters, page, pageSize, matched, counts, aiRun, reps, canAssign, numbers, today,
+  mode, rows, aiLeads, filters, page, pageSize, matched, counts, aiRun, reps,
+  workAssignments, canAssign, canLog, numbers, preferredNumberId, today,
 }: {
   mode: 'all' | 'ai';
   rows: RrrRow[];
@@ -115,8 +113,12 @@ export function RrrTable({
   counts: { all: number; ai: number };
   aiRun: AiRun | null;
   reps: Rep[];
+  workAssignments: WorkAssignment[];
   canAssign: boolean;
+  canLog: boolean;
   numbers: ContactNumber[];
+  /** The handset this rep last called from, seeding the Log-call dialog. */
+  preferredNumberId: string | null;
   today: string;
 }) {
   const router = useRouter();
@@ -142,6 +144,14 @@ export function RrrTable({
   // Which list you are on is the URL, not component state, so the sidebar can
   // link straight to it and the browser's own back button works.
   const isAi = mode === 'ai';
+  const workByCustomer = useMemo(
+    () => {
+      const byCustomer = new Map<string, WorkAssignment>();
+      for (const work of workAssignments)
+        if (!byCustomer.has(work.customer_id)) byCustomer.set(work.customer_id, work);
+      return byCustomer;
+    },
+    [workAssignments]);
 
   // ---- filter state lives in the URL -------------------------------------
   // The server reads it to decide what to fetch, so a filter change is a
@@ -305,20 +315,46 @@ export function RrrTable({
   const clearSelection = () => { setSelected(new Set()); setMessage(null); };
 
   // ---- actions -----------------------------------------------------------
+  /** Above this, a handover is more calls than the floor can make in a day and
+   *  is far likelier to be "select all matching" pressed by reflex. The whole
+   *  team's daily AI list is 45. */
+  const CONFIRM_ABOVE = 100;
+
   function submit() {
     if (!selected.size || !target) return;
     const ids = [...selected];
-    const toName = target === 'unassign'
-      ? 'the unassigned pool'
+    const unassigning = target === 'unassign';
+    const toName = unassigning
+      ? isAi ? 'unassigned calling tasks' : 'the unassigned pool'
       : reps.find((r) => r.id === target)?.full_name ?? 'that rep';
+    // On the All list this now hands over calls, not just ownership, so a
+    // batch this size is worth one question before a rep's day fills up.
+    if (!isAi && !unassigning && ids.length > CONFIRM_ABOVE
+      && !window.confirm(`Assign ${ids.length.toLocaleString('en-IN')} customers to ${toName}? Each one becomes a call on their list.`))
+      return;
     setMessage(null);
     startTransition(async () => {
-      const result = await assignRrr(ids, target === 'unassign' ? null : target);
-      if (!result.ok) { setMessage(result.error); return; }
-      setSelected(new Set());
-      setMessage(result.moved === 0
-        ? `Nothing changed — those ${ids.length} were already on ${toName}.`
-        : `${result.moved} of ${ids.length} moved to ${toName}.`);
+      const owner = unassigning ? null : target;
+      if (isAi) {
+        const result = await assignRrrWork('ai', ids, owner);
+        if (!result.ok) { setMessage(result.error); return; }
+        setSelected(new Set());
+        setMessage(result.moved === 0
+          ? `Nothing changed — those ${ids.length} were already on ${toName}.`
+          : `${result.moved} of ${ids.length} moved to ${toName}.`);
+      } else {
+        const result = await assignRrr(ids, owner);
+        if (!result.ok) { setMessage(result.error); return; }
+        setSelected(new Set());
+        // Ownership and the call are two different numbers: a customer can
+        // already be owned by the rep and still be getting their first call.
+        const { tasks, skipped } = result;
+        setMessage(unassigning
+          ? `${ids.length} back in the unassigned pool${tasks ? `, ${tasks} calling task${tasks === 1 ? '' : 's'} withdrawn` : ''}.`
+          : `${tasks} of ${ids.length} now on ${toName}'s calling list.`
+            + (result.moved ? ` Ownership moved for ${result.moved}.` : ' Ownership was already theirs.')
+            + (skipped ? ` ${skipped} skipped — DND, merged, or no order on record.` : ''));
+      }
       // The rows on screen now say the wrong owner; the server has the new one.
       router.refresh();
     });
@@ -484,9 +520,9 @@ export function RrrTable({
               {buckets.map((b) => <option key={b.code} value={b.code}>{b.label}</option>)}
             </select>
 
-            <label className="sr-only" htmlFor="rrr-owner">Calling today</label>
+            <label className="sr-only" htmlFor="rrr-owner">AI suggested caller</label>
             <select id="rrr-owner" value={filters.owner} onChange={(e) => setFilter('owner', e.target.value)}>
-              <option value="all">Everyone’s leads</option>
+              <option value="all">All AI suggestions</option>
               <option value="unassigned">Unassigned only</option>
               {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
             </select>
@@ -690,11 +726,11 @@ export function RrrTable({
 
       {canAssign ? (
         <div className="grid-toolbar rrr-assignbar">
-          <label className="sr-only" htmlFor="rrr-target">Assign to</label>
+          <label className="sr-only" htmlFor="rrr-target">{isAi ? 'Assign calling task to' : 'Assign customer to'}</label>
           <select id="rrr-target" value={target} onChange={(e) => setTarget(e.target.value)} disabled={pending}>
-            <option value="">Assign selected to…</option>
+            <option value="">{isAi ? 'Assign selected calls to…' : 'Assign selected to…'}</option>
             {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
-            <option value="unassign">— Put back in unassigned pool —</option>
+            <option value="unassign">{isAi ? '— Remove calling assignment —' : '— Put back in unassigned pool —'}</option>
           </select>
           <button type="button" onClick={submit} disabled={pending || !selected.size || !target}>
             {pending ? 'Assigning…' : `Assign ${selected.size || ''}`.trim()}
@@ -712,11 +748,11 @@ export function RrrTable({
             <button type="button" onClick={clearSelection}>Clear selection</button>
           ) : null}
 
-          {isAi ? (
-            <span className="muted">
-              This changes who owns the customer for good — today’s AI list is only who calls them today.
-            </span>
-          ) : null}
+          <span className="muted">
+            {isAi
+              ? 'This assigns a calling task. Permanent customer ownership stays unchanged.'
+              : "Moves ownership and puts the lead on that rep's calling list."}
+          </span>
         </div>
       ) : null}
 
@@ -735,15 +771,27 @@ export function RrrTable({
                   />
                 </th>
               ) : null}
-              {isAi ? <th className="num" style={{ width: 44 }}>#</th> : null}
               <th>Customer</th>
-              {isAi ? <th>Why this one</th> : <th>Payment</th>}
-              <th className="num">Orders</th>
-              <th className="num">Amount / LTV</th>
-              {isAi ? null : <th className="num">AOV</th>}
-              <th>Last activity</th>
-              <th>Activity</th>
-              <th>{isAi ? 'Calling today' : 'Follow-up'}</th>
+              {isAi ? (
+                <>
+                  <th className="num">Lifetime value</th>
+                  <th>Last order</th>
+                  <th>Medicine ends</th>
+                  <th>Activity</th>
+                  <th>Last follow-up</th>
+                  <th>Task assignment</th>
+                </>
+              ) : (
+                <>
+                  <th>Payment</th>
+                  <th className="num">Orders</th>
+                  <th className="num">Amount / LTV</th>
+                  <th className="num">AOV</th>
+                  <th>Last activity</th>
+                  <th>Activity</th>
+                  <th>Follow-up</th>
+                </>
+              )}
               <th />
             </tr>
           </thead>
@@ -751,29 +799,118 @@ export function RrrTable({
             {shown.map((r, i) => {
               const act = activity(r.days_since_order);
               const fu = followUpState(r, today);
-              const ai = isAi ? (r as AiLeadRow) : null;
+              if (isAi) {
+                const ai = r as AiLeadRow;
+                // One decision for the row's two dates — see dayMaybeYear.
+                const rowYear = isOtherYear(r.last_order_on) || isOtherYear(ai.medicine_ends_on ?? null);
+                const work = workByCustomer.get(r.customer_id);
+                const assignee = work?.assigned_to ? reps.find((rep) => rep.id === work.assigned_to)?.full_name ?? 'Assigned' : null;
+                // A call logged against today's task is newer than the queue's
+                // last contact, so it wins.
+                const outcome = work?.last_outcome ?? r.last_outcome;
+                // Handed to a rep who has not logged a call on it yet: struck
+                // through until they do.
+                const waiting = !!assignee && !work?.last_outcome && !work?.completed_at;
+                return (
+                  <tr
+                    key={r.customer_id}
+                    className={`record-row ${waiting ? 'assigned-waiting' : ''} ${selected.has(r.customer_id) ? 'selected' : ''} ${i === cursor ? 'keyboard-focused' : ''}`}
+                    onMouseDown={() => setCursor(i)}
+                  >
+                    {canAssign ? (
+                      <td className="no-strike">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.customer_id)}
+                          onChange={() => toggle(r.customer_id)}
+                          aria-label={`Select ${r.full_name}`}
+                        />
+                      </td>
+                    ) : null}
+                    <td>
+                      <button type="button" className="rrr-customer" onClick={() => setOpenRow(r)}>
+                        <span className="rrr-customer-copy">
+                          <strong>{r.full_name}</strong>
+                          <span className="muted">{r.phone_e164}</span>
+                        </span>
+                      </button>
+                    </td>
+                    <td className="num">{money(r.lifetime_value)}</td>
+                    <td>
+                      {/* Both dates carry the year, or neither does. A row
+                          reading "30 Dec 2025 → ends 5 Feb" makes the reader
+                          guess which February, and the missing year suggests
+                          the wrong one. */}
+                      {r.last_order_on ? dayMaybeYear(r.last_order_on, rowYear) : '—'}
+                      {ai.last_order_products ? <><br /><span className="muted">{ai.last_order_products}</span></> : null}
+                    </td>
+                    <td>
+                      {ai.medicine_ends_on ? (() => {
+                        const left = daysBetween(today, ai.medicine_ends_on);
+                        return <>
+                          {dayMaybeYear(ai.medicine_ends_on, rowYear)}
+                          <br />
+                          <span className="muted" title={ai.medicine_ends_estimated ? 'Estimated: delivery taken as 7 days after the order, and/or the course length read off the tablets rather than recorded' : undefined}>
+                            {left < 0 ? `Ended ${-left}d ago` : left === 0 ? 'Ends today' : `${left}d left`}
+                            {ai.medicine_ends_estimated ? ' · est.' : ''}
+                          </span>
+                        </>;
+                      })() : <span className="muted">—</span>}
+                    </td>
+                    <td>
+                      <span className={`status-pill ${act.tone}`}>
+                        {r.days_since_order == null
+                          ? act.text
+                          : `${r.days_since_order <= 90 ? 'Active' : 'Inactive'} · ${r.days_since_order} ${r.days_since_order === 1 ? 'day' : 'days'} ago`}
+                      </span>
+                    </td>
+                    <td>
+                      {outcome
+                        ? <span className={`status-pill ${outcomeTone(outcome)}`}>{outcomeLabel(outcome) ?? outcome}</span>
+                        : <span className="muted">No follow-up yet</span>}
+                      {outcome && r.last_contacted_on && !work?.last_outcome
+                        ? <><br /><span className="muted">{dayInYear(r.last_contacted_on)}</span></> : null}
+                      {work?.last_outcome ? <><br /><span className="muted">Today</span></> : null}
+                    </td>
+                    <td className="no-strike">
+                      {waiting ? (
+                        <span className="status-pill attention">
+                          Assigned {work?.assigned_at && istDateFromTimestamp(work.assigned_at) !== today ? dayShort(work.assigned_at) : 'today'} · {assignee}
+                        </span>
+                      ) : (
+                        <strong>{assignee ? `${work?.completed_at ? 'Completed by ' : 'Called by '}${assignee}` : 'Not assigned yet'}</strong>
+                      )}
+                      <br />
+                      <span className="muted">AI suggested: {ai.ai_owner_name ?? 'Unassigned'}</span>
+                    </td>
+                    <td className="no-strike">
+                      {canLog ? <button type="button" onClick={() => setCalling(callTargetFor(r))}>Log call</button> : null}
+                    </td>
+                  </tr>
+                );
+              }
+              // Assigning here hands over the call as well as the customer,
+              // so the row says so and greys out until the rep has called —
+              // the same signal the AI, Due and Medicine Ending lists give.
+              const work = workByCustomer.get(r.customer_id);
+              const assignee = work?.assigned_to
+                ? reps.find((rep) => rep.id === work.assigned_to)?.full_name ?? 'Assigned'
+                : null;
+              const waiting = !!assignee && !work?.last_outcome && !work?.completed_at;
               return (
                 <tr
                   key={r.customer_id}
-                  className={`record-row ${selected.has(r.customer_id) ? 'selected' : ''} ${i === cursor ? 'keyboard-focused' : ''}`}
+                  className={`record-row ${waiting ? 'assigned-waiting' : ''} ${selected.has(r.customer_id) ? 'selected' : ''} ${i === cursor ? 'keyboard-focused' : ''}`}
                   onMouseDown={() => setCursor(i)}
                 >
                   {canAssign ? (
-                    <td>
+                    <td className="no-strike">
                       <input
                         type="checkbox"
                         checked={selected.has(r.customer_id)}
                         onChange={() => toggle(r.customer_id)}
                         aria-label={`Select ${r.full_name}`}
                       />
-                    </td>
-                  ) : null}
-
-                  {ai ? (
-                    <td className="num">
-                      {ai.rank}
-                      <br />
-                      <span className="muted" title="Priority score out of 100">{ai.priority_score}</span>
                     </td>
                   ) : null}
 
@@ -791,48 +928,32 @@ export function RrrTable({
                     </button>
                   </td>
 
-                  {ai ? (
-                    <td className="rrr-why">
-                      <span className={`status-pill ${BUCKET_TONE[ai.bucket] ?? 'neutral'}`}>
-                        {ai.bucket_label ?? ai.bucket}
-                      </span>
-                      {ai.reason ? <span className="muted">{ai.reason}</span> : null}
-                    </td>
-                  ) : (
-                    <td>{r.payment_profile ? <span className="status-pill neutral">{r.payment_profile}</span> : '—'}</td>
-                  )}
+                  <td>{r.payment_profile ? <span className="status-pill neutral">{r.payment_profile}</span> : '—'}</td>
 
                   <td className="num">{r.lifetime_orders}</td>
                   <td className="num">{money(r.lifetime_value)}</td>
-                  {isAi ? null : <td className="num">{money(r.aov)}</td>}
+                  <td className="num">{money(r.aov)}</td>
                   <td>
                     {r.last_order_on ?? '—'}
                     <br />
                     <span className="muted">{r.last_order_source ?? 'Order placed'}</span>
                   </td>
                   <td><span className={`status-pill ${act.tone}`}>{act.text}</span></td>
-                  {ai ? (
-                    <td>
-                      <strong>{ai.ai_owner_name ?? 'Unassigned'}</strong>
-                      <br />
-                      <span className="muted">
-                        {/* Who owns the customer the rest of the time, said out
-                            loud only when it is somebody else — otherwise it
-                            reads as a contradiction. */}
-                        {r.owner_name && r.owner_name !== ai.ai_owner_name
-                          ? `Owned by ${r.owner_name}`
-                          : fu.text}
+                  <td className="no-strike">
+                    {waiting ? (
+                      <span className="status-pill attention">
+                        Assigned {work?.assigned_at && istDateFromTimestamp(work.assigned_at) !== today ? dayShort(work.assigned_at) : 'today'} · {assignee}
                       </span>
-                    </td>
-                  ) : (
-                    <td>
+                    ) : (
                       <span className={`status-pill ${fu.tone}`}>{fu.text}</span>
-                      <br />
-                      <span className="muted">{r.owner_name ?? 'Unassigned'}</span>
-                    </td>
-                  )}
-                  <td>
-                    <button type="button" onClick={() => setCalling(callTargetFor(r))}>Log call</button>
+                    )}
+                    <br />
+                    <span className="muted">
+                      {assignee && !waiting ? `Called by ${assignee}` : r.owner_name ?? 'Unassigned'}
+                    </span>
+                  </td>
+                  <td className="no-strike">
+                    {canLog ? <button type="button" onClick={() => setCalling(callTargetFor(r))}>Log call</button> : null}
                   </td>
                 </tr>
               );
@@ -872,7 +993,7 @@ export function RrrTable({
           name={openRow.full_name}
           phone={openRow.phone_e164}
           onClose={() => setOpenRow(null)}
-          onLogCall={() => { setCalling(callTargetFor(openRow)); setOpenRow(null); }}
+          onLogCall={canLog ? () => { setCalling(callTargetFor(openRow)); setOpenRow(null); } : undefined}
         />
       ) : null}
 
@@ -880,6 +1001,7 @@ export function RrrTable({
         <LogCallDialog
           target={calling}
           numbers={numbers}
+          preferredNumberId={preferredNumberId}
           onClose={() => setCalling(null)}
           onSaved={(msg) => { setCalling(null); setMessage(msg); router.refresh(); }}
         />

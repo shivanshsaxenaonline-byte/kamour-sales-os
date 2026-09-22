@@ -1,0 +1,27 @@
+.poc-page .rz-filters label:first-child { min-width: min(380px, 100%); }
+.poc-page .rz-filters label:first-child input { width: 380px; }
+.poc-page .rz-table-scroll table { min-width: 1450px; }
+.poc-count { display: flex; align-items: baseline; gap: 7px; min-height: 34px; padding: 7px 0; color: var(--text-dim); font-size: 11px; }
+.poc-count strong { color: var(--text); font-size: 15px; }
+.poc-assignbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 12px; }
+.poc-assignbar select { min-width: 210px; height: 34px; }
+.poc-assignbar button { height: 34px; }
+.poc-assignbar > span { color: var(--text-dim); font-size: 11px; }
+.poc-assignbar > .rz-error { padding: 0; color: var(--stop); }
+.poc-check { width: 38px; text-align: center !important; }
+.poc-check input { width: 15px; height: 15px; }
+.poc-page tbody tr.poc-selected { background: var(--accent-bg); }
+.poc-remark { min-width: 240px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.poc-sync-warning { margin: 0 0 12px; border-left: 3px solid var(--pend); padding: 8px 10px; background: var(--pend-bg); color: var(--text); font-size: 11px; }
+.poc-loading { padding-top: 12px; }
+.poc-close { width: 34px; height: 34px; display: grid; place-items: center; }
+.poc-followup-raw { min-width: 420px; white-space: normal; }
+.poc-detail { width: 900px; }
+.poc-all-fields dd { white-space: pre-wrap; }
+.poc-all-fields a { color: var(--accent); }
+@media (max-width: 650px) {
+  .poc-page .rz-filters label:first-child,
+  .poc-page .rz-filters label:first-child input { width: 100%; min-width: 100%; }
+  .poc-page .rz-filters label:not(:first-child) { flex: 1; }
+  .poc-page .rz-filters select { width: 100%; }
+}

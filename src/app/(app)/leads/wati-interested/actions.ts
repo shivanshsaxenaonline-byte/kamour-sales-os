@@ -402,7 +402,7 @@ export async function assignWatiInterestedLeads(input: { leadIds: string[]; assi
   }
 
   revalidatePath('/leads/wati-interested');
-  revalidatePath('/leads/wati-interested/analytics');
+  revalidatePath('/rrr/analytics');
   revalidatePath('/rrr/my');
   revalidatePath('/rrr/work');
   return { assigned: updated.length, assignee: assignee.full_name || ASSIGNEES[input.assignee] };

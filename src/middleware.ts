@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isRrrOnlySection, loginIdFromEmail, RRR_ONLY_IDS } from '@/app/login/accounts';
 
 /**
  * Refreshes the Supabase session on every request and gates the app behind a
@@ -36,6 +37,26 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = '/';
     return NextResponse.redirect(url);
+  }
+
+  if (user && pathname !== '/login') {
+    const loginId = loginIdFromEmail(user.email);
+    const { data: profile } = await supabase.from('users').select('role, is_active')
+      .eq('id', user.id).single();
+    if (profile?.is_active && loginId && RRR_ONLY_IDS.includes(loginId)
+      && !isRrrOnlySection(pathname)) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/rrr';
+      url.search = '';
+      return NextResponse.redirect(url);
+    }
+    if (profile?.is_active && ['sales_exec', 'sales_manager'].includes(profile.role)
+      && pathname !== '/rrr/my' && !pathname.startsWith('/rrr/my/')) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/rrr/my';
+      url.search = '';
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

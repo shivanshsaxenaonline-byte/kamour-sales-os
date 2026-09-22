@@ -177,6 +177,119 @@ async function main() {
         and owner_id is distinct from $2`, [victims[0], rep])).rows[0].n;
   ok('completed follow-ups keep their original owner (history not rewritten)', doneFu === 0);
 
+  // --- the handover the All-customers tab actually makes --------------------
+  // Owning a customer stopped meaning anything to a rep at the 14 September
+  // cutover: their day is rrr_work_items, and the restrictive
+  // `sales_rrr_customers_only` policy hides everything else. So the test that
+  // matters is not "did current_owner_id change" - it is "can the rep see it".
+  console.log('\nAll-customers assign hands over the call\n');
+
+  await asPostgres();
+  const handover = (await c.query(
+    `select v.customer_id from v_rrr_queue v
+      where not exists (select 1 from rrr_work_items w
+                        where w.customer_id = v.customer_id and w.completed_at is null)
+      limit 3`)).rows.map((r) => r.customer_id);
+
+  await as(who.auditor);
+  const both = await attempt(
+    'select fn_assign_rrr_customers_with_work($1::uuid[], $2::uuid) as r', [handover, rep]);
+  ok('auditor can assign customer and call in one action', !both.error, both.error);
+  ok('every selected customer became a calling task',
+     both.rows?.[0]?.r?.tasks === handover.length,
+     JSON.stringify(both.rows?.[0]?.r));
+
+  await asPostgres();
+  const owned = (await c.query(
+    'select count(*)::int n from customers where id = any($1::uuid[]) and current_owner_id = $2',
+    [handover, rep])).rows[0].n;
+  ok('ownership moved with it', owned === handover.length, owned + ' of ' + handover.length);
+
+  // The point of the whole exercise.
+  await as(rep);
+  const repSees = await attempt(
+    `select count(*)::int n from rrr_work_items w
+      where w.customer_id = any($1::uuid[]) and w.assigned_to = auth.uid()
+        and w.completed_at is null`, [handover]);
+  ok('the rep sees the leads on their own list',
+     repSees.rows?.[0]?.n === handover.length,
+     repSees.error ?? (repSees.rows?.[0]?.n + ' of ' + handover.length));
+  const repReads = await attempt(
+    'select count(*)::int n from customers where id = any($1::uuid[])', [handover]);
+  ok('the rep can open those customers', repReads.rows?.[0]?.n === handover.length,
+     repReads.error ?? (repReads.rows?.[0]?.n + ' of ' + handover.length));
+
+  await asPostgres();
+  await as(who.auditor);
+  const pool = await attempt(
+    'select fn_assign_rrr_customers_with_work($1::uuid[], null) as r', [handover]);
+  ok('back to the pool withdraws the calling task too',
+     pool.rows?.[0]?.r?.tasks === handover.length,
+     pool.error ?? JSON.stringify(pool.rows?.[0]?.r));
+  await asPostgres();
+  const left = (await c.query(
+    `select count(*)::int n from rrr_work_items
+      where customer_id = any($1::uuid[]) and completed_at is null`, [handover])).rows[0].n;
+  ok('no task left behind', left === 0, left + ' still open');
+
+  // One DND customer in a batch of three must not fail the other two.
+  await c.query('update customers set is_dnd = true where id = $1', [handover[0]]);
+  await as(who.auditor);
+  const mixed = await attempt(
+    'select fn_assign_rrr_customers_with_work($1::uuid[], $2::uuid) as r', [handover, rep]);
+  ok('a DND customer is skipped, not fatal',
+     !mixed.error && mixed.rows?.[0]?.r?.skipped === 1
+       && mixed.rows?.[0]?.r?.tasks === handover.length - 1,
+     mixed.error ?? JSON.stringify(mixed.rows?.[0]?.r));
+  await asPostgres();
+  await c.query('update customers set is_dnd = false where id = $1', [handover[0]]);
+
+  await as(who.sales_exec);
+  const repAssigns = await attempt(
+    'select fn_assign_rrr_customers_with_work($1::uuid[], $2::uuid)', [handover, rep]);
+  ok('a sales exec cannot hand leads out through the combined function',
+     !!repAssigns.error && /not permitted/i.test(repAssigns.error),
+     repAssigns.error ?? 'no error raised');
+  await asPostgres();
+  await as(who.auditor);
+  const badTarget = await attempt(
+    'select fn_assign_rrr_customers_with_work($1::uuid[], $2::uuid)', [handover, who.ops]);
+  ok('the combined function still refuses a non-salesperson target',
+     !!badTarget.error, badTarget.error ?? 'no error raised');
+  await asPostgres();
+
+  // --- a handover is a fresh task, not the last one with a new name on it ---
+  // Most of Due today already has an open task: the rep called yesterday, got
+  // no answer, and the follow-up came back round. Re-assigning used to carry
+  // that call across, so the Due screen thought the new rep had already rung
+  // and never struck the row through, and an inherited future date could park
+  // the lead in the rep's Upcoming tab instead of today's calls.
+  console.log('\nRe-assigning a lead that was already called\n');
+
+  const carried = handover[1];
+  await c.query(
+    `update rrr_work_items set assigned_to = $1, last_outcome = 'no_answer',
+       last_called_at = now() - interval '1 day', medicine_days_left = 4,
+       due_on = ist_today() + 30
+     where customer_id = $2 and completed_at is null`, [rep, carried]);
+
+  await as(who.auditor);
+  const again = await attempt(
+    `select fn_assign_rrr_work('due', array[$1]::uuid[], $2::uuid) as n`, [carried, rep]);
+  ok('re-assigning an already-called lead succeeds', !again.error, again.error);
+  await asPostgres();
+
+  const fresh = (await c.query(
+    `select last_outcome, last_called_at, medicine_days_left,
+            due_on = ist_today() as due_today
+       from rrr_work_items where customer_id = $1 and completed_at is null`, [carried])).rows[0];
+  ok('the previous rep\'s call does not come with it',
+     fresh?.last_outcome === null && fresh?.last_called_at === null
+       && fresh?.medicine_days_left === null,
+     JSON.stringify(fresh));
+  ok('a lead handed over today is due today, not on the old date',
+     fresh?.due_today === true, JSON.stringify(fresh));
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   await c.query('rollback');
   await c.end();

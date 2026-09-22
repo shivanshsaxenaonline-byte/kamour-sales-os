@@ -41,6 +41,7 @@ const ORDER = [
   'prescriptions', 'prescription_items', 'orders', 'order_items', 'followups',
   'attendance', 'absence_events', 'assignments', 'wa_conversations', 'ad_spend',
   'audit_log', 'webhook_events', 'import_rejects', 'schema_migrations',
+  'ai_lead_rules', 'ai_lead_runs', 'ai_daily_leads',
 ];
 
 async function backup() {

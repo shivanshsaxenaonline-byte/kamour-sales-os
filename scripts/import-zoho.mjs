@@ -250,6 +250,9 @@ async function main() {
         blank(g(r, 'UTM Campaign')) ? null : g(r, 'UTM Campaign'),
         day(g(r, 'Date of Connection')) ? ts(g(r, 'Date of Connection')) : null,
         created,
+        blank(g(r, 'Connection Status')) ? null : g(r, 'Connection Status'),
+        blank(g(r, 'Lead Insights')) ? null : g(r, 'Lead Insights'),
+        blank(g(r, 'Contacted Person')) ? null : g(r, 'Contacted Person'),
       ]);
       bump('leads');
 
@@ -302,7 +305,8 @@ async function main() {
 
     await bulk('leads',
       ['id','customer_id','source_id','channel','status_id','concern_id','owner_id',
-       'utm_source','utm_medium','utm_campaign','first_contacted_at','created_at'],
+       'utm_source','utm_medium','utm_campaign','first_contacted_at','created_at',
+       'zoho_connection_status','zoho_lead_insight','zoho_contacted_person'],
       leads.filter(keep), 'on conflict do nothing');
 
     await bulk('followups',

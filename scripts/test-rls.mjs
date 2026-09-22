@@ -126,11 +126,14 @@ const run = async () => {
     // ---------------- the actual tests ----------------
     console.log('\nsales_exec isolation (the crafted-API-call requirement)');
     await as(U.execA);
-    ok('exec A sees own lead', await visible('select 1 from leads where id=$1', [leadA]) === 1);
+    ok('exec A cannot see old owned lead without Alka assignment',
+       await visible('select 1 from leads where id=$1', [leadA]) === 0);
     ok("exec A CANNOT see exec B's lead",
        await visible('select 1 from leads where id=$1', [leadB]) === 0);
-    ok('exec A sees only 1 lead in an unfiltered scan',
-       await visible('select 1 from leads') === 1);
+    ok('exec A sees no leads in an unfiltered CRM scan',
+       await visible('select 1 from leads') === 0);
+    ok('exec A cannot see old owned customer without Alka assignment',
+       await visible('select 1 from customers where id=$1', [custA]) === 0);
     let n = await visible('select 1 from customers where id=$1', [custB]);
     ok("exec A CANNOT see exec B's customer", n === 0, `rowCount=${n} ${lastErr ?? ''}`);
     n = await visible('select 1 from orders where id=$1', [orderB]);
@@ -140,24 +143,22 @@ const run = async () => {
       'update leads set is_junk = true where id = $1 returning id', [leadB])).rowCount;
     ok("exec A CANNOT update exec B's lead (0 rows affected, silent by design)", updated === 0);
 
-    console.log('\nthe pool: rows denied at the table, masked through the view');
+    console.log('\nthe pool: sales users cannot browse unassigned CRM leads');
     ok('exec A cannot see the unassigned lead in the base table',
        await visible('select 1 from leads where owner_id is null') === 0);
     // Filtered to the fixture: real imported data now fills the pool too, so a
     // hardcoded count would only measure the size of the import.
     const pool = await c.query(
       'select full_name, phone_masked from v_pool_leads where customer_id = $1', [custPool]);
-    ok('exec A sees the pool lead through v_pool_leads', pool.rowCount === 1);
-    ok(`phone is masked: ${pool.rows[0]?.phone_masked}`,
-       /^\d{2}••••\d{4}$/.test(pool.rows[0]?.phone_masked ?? ''));
+    ok('exec A cannot see the unassigned pool view', pool.rowCount === 0);
     ok('the raw phone is NOT in the pool view',
        !JSON.stringify(pool.rows).includes('+919990000003'));
 
-    console.log('\nsales_manager sees the team');
+    console.log('\nsales_manager also sees only explicit RRR assignments');
     await asPostgres(); await as(U.manager);
-    ok('manager sees both execs\' leads', await visible('select 1 from leads') >= 2);
-    ok('manager sees both customers',
-       await visible('select 1 from customers where id in ($1,$2)', [custA, custB]) === 2);
+    ok('manager sees no old CRM leads', await visible('select 1 from leads') === 0);
+    ok('manager sees no unassigned customers',
+       await visible('select 1 from customers where id in ($1,$2)', [custA, custB]) === 0);
 
     console.log('\ndoctor reaches customers only through their consultations');
     await asPostgres(); await as(U.doctor);

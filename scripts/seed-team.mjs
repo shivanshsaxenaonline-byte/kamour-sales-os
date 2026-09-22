@@ -36,6 +36,7 @@ const TEAM = [
   { user: 'kratika',   name: 'Kratika',         role: 'coo',           login: true },
   { user: 'shivansh',  name: 'Shivansh',        role: 'admin',         login: true },
   { user: 'alka',      name: 'Alka',            role: 'auditor',       login: true },
+  { user: 'anushka',   name: 'Anushka',         role: 'auditor',       login: true },
 
   // Doctors: records, not logins.
   { user: 'dr.rupendra', name: 'Dr. Rupendra Singh',  role: 'doctor', login: false },

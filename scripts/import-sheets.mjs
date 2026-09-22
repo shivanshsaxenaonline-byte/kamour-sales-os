@@ -340,10 +340,18 @@ async function main() {
 
     const pm = PAY[norm(O.get(r, 'Payment Mode'))];
     const delivered = parseDate(O.get(r, 'Delivered Date'));
-    const pendingConfirm = /^true$/i.test(O.get(r, 'Pending Status'));
+    // A ticked row is a customer who never confirmed the order. It is not an
+    // order, and importing one puts the customer into the reps' calling lists
+    // for a purchase that was never made — which is what the live sync in
+    // src/lib/sheets/order-sync.ts now refuses to do. Same rule here, so a
+    // re-run of this importer cannot put them back.
+    if (/^true$/i.test(O.get(r, 'Pending Status'))) {
+      reject('order', rowNo, 'pending_confirmation', { customer: O.get(r, 'Customer Name') });
+      continue;
+    }
     // No dispatch date exists in the source (D-022/D-023), so a delivered order
     // is recorded as delivered with dispatch_date null and is_legacy set.
-    const stage = pendingConfirm ? 'pending_confirm' : delivered ? 'delivered' : 'confirmed';
+    const stage = delivered ? 'delivered' : 'confirmed';
 
     const pin = O.get(r, 'Pincode').replace(/\D/g, '');
     const when = parseDate(O.get(r, 'Date of Order'));

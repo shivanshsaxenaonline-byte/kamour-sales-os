@@ -15,7 +15,7 @@ export interface CrmRow {
   bucket?: string;
   action_label?: string;
   due_at?: string | null;
-  source?: string;
+  source?: string | null;
   status?: string;
   payment_state?: string;
   fee_state?: string;
@@ -36,10 +36,12 @@ export interface CrmRow {
   order_no?: string;
   stage?: string;
   discount?: number;
+  shipping_amount?: number;
   payment_mode?: string | null;
   courier?: string | null;
   awb?: string | null;
   dispatch_date?: string | null;
+  delivered_at?: string | null;
   course_duration_days?: number;
   next_followup_at?: string | null;
   is_repeat?: boolean;
@@ -66,8 +68,11 @@ export interface RecordDetail {
   fee_state?: string;
   fee_amount?: number | null;
   stage?: string;
+  consultation_id?: string | null;
   amount?: number;
   discount?: number;
+  shipping_amount?: number;
+  cod_amount?: number | null;
   ship_name?: string | null;
   ship_address?: string | null;
   ship_pincode?: string | null;
@@ -75,9 +80,18 @@ export interface RecordDetail {
   ship_state?: string | null;
   awb?: string | null;
   courier_id?: string | null;
+  payment_mode_id?: string | null;
+  source_id?: string | null;
   dispatch_date?: string | null;
+  delivered_at?: string | null;
+  rto_at?: string | null;
   course_duration_days?: number;
   next_followup_at?: string | null;
+  is_repeat?: boolean;
+  order_notes?: string | null;
+  ad_code?: string | null;
+  gclid?: string | null;
+  created_at?: string;
   due_at?: string;
   kind?: string;
   outcome?: string | null;
@@ -113,4 +127,20 @@ export interface EditRequest {
   id: string;
   version: string;
   value: string;
+}
+
+export interface OrderItemDetail {
+  id: string;
+  product_id: string;
+  quantity: number;
+  unit_price: number | null;
+  line_total: number | null;
+  products: { name: string; variant: string | null } | null;
+}
+
+export interface OrderWorkspaceRequest {
+  id: string;
+  version: string;
+  patch: Record<string, string | boolean>;
+  items: { product_id: string; quantity: number }[];
 }

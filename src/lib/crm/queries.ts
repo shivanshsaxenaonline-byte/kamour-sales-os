@@ -53,7 +53,7 @@ function makeListQuery(
           ? query.eq("fee_state", "paid")
           : query.neq("fee_state", "paid");
     }
-  } else if (module === "orders") query = query.eq("stage", tab);
+  } else if (module === "orders" && tab !== "all") query = query.eq("stage", tab);
   // Strip PostgREST filter grammar, not just SQL syntax. Phone search uses the masked view.
   const safe = search
     .trim()
@@ -98,11 +98,18 @@ export function useRecords(userId: string, options: ListOptions) {
         query = query
           .order("rank_bucket", { ascending: true })
           .order("due_at", { ascending: true, nullsFirst: false });
-      else
+      else {
         query = query.order(key, {
           ascending: options.ascending,
           nullsFirst: false,
         });
+        // Sheet orders share a date-only created_at; the sheet row keeps entry order.
+        if (options.module === "orders" && key === "created_at")
+          query = query.order("sheet_row_number", {
+            ascending: options.ascending,
+            nullsFirst: false,
+          });
+      }
       const { data, count, error } = await query
         .order(options.module === "today" ? "entity_id" : "id", {
           ascending: true,

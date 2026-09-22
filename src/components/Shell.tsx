@@ -1,11 +1,12 @@
 "use client";
-import Link from "next/link";
+import { DashboardLink as Link } from "./DashboardLink";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { CrmProvider } from "./CrmProvider";
 import { Icon, type IconName } from "./Icon";
 import type { UserRole } from "@/types/db";
+import { RRR_ONLY_IDS, RRR_ONLY_SECTIONS, type LoginId } from "@/app/login/accounts";
 
 const NAV: {
   href: string;
@@ -23,15 +24,30 @@ const NAV: {
     roles: ["sales_exec", "sales_manager", "admin"],
   },
   {
-    href: "/leads",
-    label: "Leads",
+    href: "/leads/paid-elementor",
+    label: "Paid Elementor",
     icon: "leads",
     roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
   },
   {
-    href: "/leads/paid-elementor",
-    label: "Paid Elementor",
+    href: "/leads/wati-interested",
+    label: "WATI Interested",
     icon: "leads",
+    roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
+    children: [
+      { href: "/leads/wati-interested", label: "Interested leads" },
+    ],
+  },
+  {
+    href: "/leads/pcr",
+    label: "PCR Calling",
+    icon: "leads",
+    roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
+  },
+  {
+    href: "/leads/poc",
+    label: "POC",
+    icon: "consultation",
     roles: ["sales_exec", "sales_manager", "admin", "coo", "ceo", "auditor"],
   },
   {
@@ -74,7 +90,10 @@ const NAV: {
     children: [
       { href: "/rrr", label: "All customers" },
       { href: "/rrr/ai", label: "AI Leads · today" },
+      { href: "/rrr/due", label: "Due today" },
       { href: "/rrr/medicine-ending", label: "Medicine Ending" },
+      { href: "/rrr/work", label: "Assigned work" },
+      { href: "/rrr/analytics", label: "Analytics" },
     ],
   },
   {
@@ -99,11 +118,15 @@ export function Shell({
   name,
   role,
   userId,
+  loginId,
+  progress,
   children,
 }: {
   name: string;
   role: UserRole;
   userId: string;
+  loginId: LoginId | null;
+  progress?: { done: number; left: number };
   children: React.ReactNode;
 }) {
   const pathname = usePathname(),
@@ -118,7 +141,14 @@ export function Shell({
   const [loggingOut, setLoggingOut] = useState(false);
   const palette = useRef<HTMLDialogElement>(null),
     commandInput = useRef<HTMLInputElement>(null);
-  const items = NAV.filter((item) => item.roles.includes(role));
+  const items = loginId && RRR_ONLY_IDS.includes(loginId)
+    // Kept in RRR_ONLY_SECTIONS order, not NAV order, so RRR stays the home
+    // these accounts land on and the brand link still points there.
+    ? RRR_ONLY_SECTIONS.flatMap((href) => NAV.filter((item) => item.href === href))
+    : role === 'sales_exec'
+    ? [{ href: '/rrr/my', label: 'My assigned follow-ups', icon: 'orders' as IconName,
+      roles: ['sales_exec' as UserRole] }]
+    : NAV.filter((item) => item.roles.includes(role));
   useEffect(() => {
     let preferred: "light" | "dark" = window.matchMedia(
       "(prefers-color-scheme: dark)",
@@ -169,6 +199,43 @@ export function Shell({
     }
     router.replace("/login");
     router.refresh();
+  }
+  if (role === 'sales_exec' || role === 'sales_manager') {
+    const done = progress?.done ?? 0;
+    const left = progress?.left ?? 0;
+    const total = done + left;
+    const percent = total ? Math.round((done / total) * 100) : 0;
+    const progressTone = percent === 100 ? 'complete'
+      : percent >= 70 ? 'high' : percent >= 35 ? 'medium' : 'low';
+    return (
+      <CrmProvider key={userId} viewer={{ id: userId, name, role }}>
+        <div className="crm-windowbar"><span>Kamour Sales OS</span>
+          <span className="windowbar-right">Sales follow-ups</span></div>
+        <div className="sales-rrr-shell">
+          <header className="sales-rrr-header">
+            <Link href="/rrr/my" className="sales-rrr-brand">kamour <span>· My assigned calls</span></Link>
+            <div className={`sales-progress ${progressTone}`} aria-label={`${done} of ${total} follow-ups completed today, ${left} left`}>
+              <span className="sales-progress-label">Today&apos;s progress</span>
+              <div className="sales-progress-track" role="progressbar" aria-valuemin={0}
+                aria-valuemax={100} aria-valuenow={percent}>
+                <span className="sales-progress-fill" style={{ width: `${percent}%` }} />
+              </div>
+              <span className="sales-progress-summary">
+                <strong>{done}/{total} · {percent}%</strong>
+                <small>{left} left</small>
+              </span>
+            </div>
+            <span className="sales-rrr-user">{name}</span>
+            <button type="button" onClick={toggleTheme}>Switch to {theme === 'dark' ? 'light' : 'dark'}</button>
+            <button type="button" disabled={loggingOut} onClick={() => void signOut()}>
+              {loggingOut ? 'Signing out…' : 'Sign out'}
+            </button>
+          </header>
+          {logoutError ? <p role="alert">{logoutError}</p> : null}
+          <main className="crm-main">{children}</main>
+        </div>
+      </CrmProvider>
+    );
   }
   return (
     <CrmProvider key={userId} viewer={{ id: userId, name, role }}>

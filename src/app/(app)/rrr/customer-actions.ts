@@ -14,6 +14,12 @@ export type OrderRow = {
   source: string | null;
   products: string | null;
   delivered_on: string | null;
+  course_duration_days: number | null;
+  /** The view's own arithmetic — see v_rrr_customer_orders. Not recomputed
+   *  here, so the panel cannot disagree with the AI list about the same box
+   *  of tablets. */
+  medicine_ends_on: string | null;
+  medicine_ends_estimated: boolean | null;
 };
 
 export type CallRow = {
@@ -25,6 +31,9 @@ export type CallRow = {
   attempt_no: number;
   by_name: string | null;
   called_from: string | null;
+  /** 'order' for repeat-purchase calls; 'lead' / 'consultation' are the calls
+   *  made before the customer first bought. */
+  kind: string;
 };
 
 /**
@@ -47,14 +56,14 @@ export async function loadCustomerHistory(customerId: string): Promise<{
 
   const [orders, calls] = await Promise.all([
     db.from('v_rrr_customer_orders')
-      .select('order_id, order_no, ordered_on, amount, stage, payment_state, payment_mode, ship_state, source, products, delivered_on')
+      .select('order_id, order_no, ordered_on, amount, stage, payment_state, payment_mode, ship_state, source, products, delivered_on, course_duration_days, medicine_ends_on, medicine_ends_estimated')
       .eq('customer_id', customerId)
       .order('ordered_on', { ascending: false }),
     db.from('v_rrr_customer_followups')
-      .select('followup_id, due_at, completed_at, outcome, remark, attempt_no, by_name, called_from')
+      .select('followup_id, due_at, completed_at, outcome, remark, attempt_no, by_name, called_from, kind')
       .eq('customer_id', customerId)
       .order('due_at', { ascending: false })
-      .limit(100),
+      .limit(300),
   ]);
 
   if (orders.error) return { orders: [], calls: [], error: orders.error.message };

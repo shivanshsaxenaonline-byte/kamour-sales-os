@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "./design-tokens.css";
 @import "./crm.css";
+@import "./skeleton.css";
+@import "./login/login.css";
 
 @theme inline {
   --color-bg: var(--bg);
