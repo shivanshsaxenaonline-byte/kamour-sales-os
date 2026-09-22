@@ -82,6 +82,10 @@ const METRIC_LABEL: Record<Metric, string> = {
 
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '—');
 
+// Hidden at the user's request while the backfill/reassignment settles down.
+// Flip back to true when they say to bring it back.
+const SHOW_OPEN_TASKS_TILE = false;
+
 /** The two calling streams, as a pill. WATI borrows its tone from work-tags so
  *  a lead wears the same colour here as it does on the rep's own list. */
 const CHANNEL: Record<CallLine['channel'], { label: string; tone: string }> = {
@@ -210,7 +214,7 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
                   {tile('orders', 'Orders placed', r.orders)}
                   {tile('scheduled', 'Next call set', r.scheduled)}
                   {tile('assigned', 'Assigned that day', r.assigned)}
-                  {tile('open', 'Open tasks', r.open, r.open > 0)}
+                  {SHOW_OPEN_TASKS_TILE ? tile('open', 'Open tasks', r.open, r.open > 0) : null}
                 </div>
               </div>
             );
