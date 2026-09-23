@@ -12,7 +12,10 @@ export type RepDay = {
   id: string | null;
   name: string;
   assigned: number;
+  /** Live: what is waiting in the rep's "Aaj ke calls" tab right now. */
   open: number;
+  /** Live: leads the rep has pinned as potential and nobody has removed. */
+  potential: number;
   calls: number;
   customers: number;
   connected: number;
@@ -58,10 +61,23 @@ export type TaskLine = {
   last_called_at: string | null;
 };
 
+export type PotentialLine = {
+  id: string;
+  customer_id: string | null;
+  full_name: string;
+  phone_e164: string;
+  rep_id: string | null;
+  rep_name: string;
+  source: WorkSource;
+  order_no: string | null;
+  note: string | null;
+  marked_at: string;
+};
+
 /** What a tile on a card narrows the page to. The first five are calls from
- *  the log; the last two are tasks, which get a list of their own. */
-type Metric = 'all' | 'connected' | 'notPicked' | 'orders' | 'scheduled' | 'assigned' | 'open';
-type CallMetric = Exclude<Metric, 'assigned' | 'open'>;
+ *  the log; the next two are tasks, and potential leads get a list of their own. */
+type Metric = 'all' | 'connected' | 'notPicked' | 'orders' | 'scheduled' | 'assigned' | 'open' | 'potential';
+type CallMetric = Exclude<Metric, 'assigned' | 'open' | 'potential'>;
 
 // Kept in step with CONNECTED / NOT_PICKED in page.tsx, which count the tiles.
 const CONNECTED = new Set(['order_placed', 'will_buy', 'medicine_not_finished', 'will_update_later', 'connected', 'not_interested', 'other']);
@@ -77,14 +93,11 @@ const CALL_TEST: Record<CallMetric, (l: CallLine) => boolean> = {
 
 const METRIC_LABEL: Record<Metric, string> = {
   all: 'All calls', connected: 'Connected', notPicked: 'Not picked', orders: 'Orders placed',
-  scheduled: 'Next call set', assigned: 'Assigned that day', open: 'Open tasks',
+  scheduled: 'Next call set', assigned: 'Assigned that day', open: 'Pending work (live)',
+  potential: 'Potential leads',
 };
 
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '—');
-
-// Hidden at the user's request while the backfill/reassignment settles down.
-// Flip back to true when they say to bring it back.
-const SHOW_OPEN_TASKS_TILE = false;
 
 /** The two calling streams, as a pill. WATI borrows its tone from work-tags so
  *  a lead wears the same colour here as it does on the rep's own list. */
@@ -93,13 +106,14 @@ const CHANNEL: Record<CallLine['channel'], { label: string; tone: string }> = {
   wati_interested: { label: workSourceLabel('wati_interested'), tone: workSourceTone('wati_interested') },
 };
 
-export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTasks, automatic }: {
+export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTasks, potentialLeads, automatic }: {
   date: string;
   today: string;
   reps: RepDay[];
   lines: CallLine[];
   assignedTasks: TaskLine[];
   openTasks: TaskLine[];
+  potentialLeads: PotentialLine[];
   automatic: number;
 }) {
   const router = useRouter();
@@ -107,15 +121,19 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
   const [rep, setRep] = useState('all');
   const [outcome, setOutcome] = useState('all');
   const [metric, setMetric] = useState<Metric>('all');
-  const [open, setOpen] = useState<CallLine | TaskLine | null>(null);
+  const [open, setOpen] = useState<CallLine | TaskLine | PotentialLine | null>(null);
 
   const goTo = (d: string) => startNav(() => router.push(`/rrr/analytics?date=${d}`, { scroll: false }));
 
   const isTasks = metric === 'assigned' || metric === 'open';
-  const shown = useMemo(() => isTasks ? [] : lines.filter((l) =>
+  const isPotential = metric === 'potential';
+  const shown = useMemo(() => isTasks || isPotential ? [] : lines.filter((l) =>
     (rep === 'all' || (l.rep_id ?? 'none') === rep)
     && CALL_TEST[metric as CallMetric](l)
-    && (outcome === 'all' || l.outcome === outcome)), [lines, rep, outcome, metric, isTasks]);
+    && (outcome === 'all' || l.outcome === outcome)), [lines, rep, outcome, metric, isTasks, isPotential]);
+  const potentials = useMemo(() => isPotential
+    ? potentialLeads.filter((p) => rep === 'all' || (p.rep_id ?? 'none') === rep)
+    : [], [isPotential, potentialLeads, rep]);
   const tasks = useMemo(() => {
     if (!isTasks) return [];
     const pool = metric === 'assigned' ? assignedTasks : openTasks;
@@ -137,7 +155,7 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
   /** Name and number, clickable into the history panel only when there is a
    *  customer to open. A WATI Interested prospect who has never ordered has no
    *  customer row, and the panel would have nothing to show. */
-  const subject = (row: CallLine | TaskLine, sub2: string) => row.customer_id
+  const subject = (row: CallLine | TaskLine | PotentialLine, sub2: string) => row.customer_id
     ? (
       <button type="button" className="rrr-customer" onClick={() => setOpen(row)}>
         <span className="rrr-customer-copy">
@@ -156,10 +174,11 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
 
   const total = reps.reduce((t, r) => ({
     ...t,
-    assigned: t.assigned + r.assigned, open: t.open + r.open, calls: t.calls + r.calls,
+    assigned: t.assigned + r.assigned, open: t.open + r.open, potential: t.potential + r.potential,
+    calls: t.calls + r.calls,
     customers: t.customers + r.customers, connected: t.connected + r.connected,
     notPicked: t.notPicked + r.notPicked, orders: t.orders + r.orders, scheduled: t.scheduled + r.scheduled,
-  }), { id: 'total', name: 'Whole team', assigned: 0, open: 0, calls: 0, customers: 0, connected: 0, notPicked: 0, orders: 0, scheduled: 0 } as RepDay);
+  }), { id: 'total', name: 'Whole team', assigned: 0, open: 0, potential: 0, calls: 0, customers: 0, connected: 0, notPicked: 0, orders: 0, scheduled: 0 } as RepDay);
 
   return (
     <section className="data-grid" aria-busy={navigating}>
@@ -182,7 +201,7 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
 
       <div className="grid-scroll analytics-body">
         <p className="muted analytics-caption">
-          {dayLong(date)} · every call logged that day, by salesperson — RRR and WATI Interested together, tagged by the list each came off. “Assigned that day” counts hand-overs made that day; a lead handed over again counts again. “Open tasks” is assigned work that is due and still not closed — the same count the salesperson sees in their own “Aaj ke calls” tab. Follow-ups they have already made and dated forward sit in their Upcoming tab and are not counted here.
+          {dayLong(date)} · every call logged that day, by salesperson — RRR and WATI Interested together, tagged by the list each came off. “Assigned that day” counts hand-overs made that day; a lead handed over again counts again. “Pending work” is live, whatever day is picked: leads due today or earlier that are not yet called today — exactly what the salesperson sees in their own “Aaj ke calls” tab. Follow-ups dated forward (their Upcoming tab) are not pending. “Potential leads” is live too: every lead the salesperson has pinned as potential and nobody has removed.
           {automatic ? ` ${automatic} automatic system updates (order converted / course follow-up created) are not counted as calls.` : ''}
         </p>
 
@@ -214,7 +233,8 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
                   {tile('orders', 'Orders placed', r.orders)}
                   {tile('scheduled', 'Next call set', r.scheduled)}
                   {tile('assigned', 'Assigned that day', r.assigned)}
-                  {SHOW_OPEN_TASKS_TILE ? tile('open', 'Open tasks', r.open, r.open > 0) : null}
+                  {tile('open', 'Pending work', r.open, r.open > 0)}
+                  {tile('potential', 'Potential leads', r.potential)}
                 </div>
               </div>
             );
@@ -222,9 +242,9 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
         </div>
 
         <div className="grid-toolbar analytics-filters" id="analytics-log">
-          <strong>{isTasks ? METRIC_LABEL[metric] : 'Call log'}</strong>
+          <strong>{isTasks || isPotential ? METRIC_LABEL[metric] : 'Call log'}</strong>
           <span className="muted">
-            {isTasks ? `${tasks.length} tasks` : `${shown.length} of ${lines.length}`}
+            {isTasks ? `${tasks.length} leads` : isPotential ? `${potentials.length} leads` : `${shown.length} of ${lines.length}`}
             {filtering && (rep !== 'all' || metric !== 'all')
               ? ` · ${repLabel}${metric !== 'all' ? ` · ${METRIC_LABEL[metric]}` : ''}` : ''}
           </span>
@@ -236,14 +256,39 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
             {reps.map((r) => <option key={r.id ?? 'none'} value={r.id ?? 'none'}>{r.name}</option>)}
           </select>
           <label className="sr-only" htmlFor="analytics-outcome">Response</label>
-          <select id="analytics-outcome" value={outcome} disabled={isTasks}
+          <select id="analytics-outcome" value={outcome} disabled={isTasks || isPotential}
             onChange={(e) => setOutcome(e.target.value)}>
             <option value="all">All responses</option>
             {OUTCOME_CODES.map((c) => <option key={c} value={c}>{outcomeLabel(c)}</option>)}
           </select>
         </div>
 
-        {isTasks ? (
+        {isPotential ? (
+          <table className="records-table rrr-table">
+            <thead>
+              <tr>
+                <th>Salesperson</th>
+                <th>Customer</th>
+                <th>Source</th>
+                <th>Order</th>
+                <th>Note</th>
+                <th>Marked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {potentials.map((p) => (
+                <tr key={p.id} className="record-row">
+                  <td>{p.rep_name}</td>
+                  <td>{subject(p, p.phone_e164)}</td>
+                  <td><span className={`status-pill ${workSourceTone(p.source)}`}>{workSourceLabel(p.source)}</span></td>
+                  <td>{p.order_no ?? <span className="muted">—</span>}</td>
+                  <td className="analytics-note">{p.note ?? <span className="muted">—</span>}</td>
+                  <td>{dayShort(p.marked_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : isTasks ? (
           <table className="records-table rrr-table">
             <thead>
               <tr>
@@ -311,7 +356,10 @@ export function AnalyticsView({ date, today, reps, lines, assignedTasks, openTas
         {isTasks && tasks.length === 0 ? (
           <div className="grid-empty"><p>No tasks match this filter.</p></div>
         ) : null}
-        {!isTasks && shown.length === 0 ? (
+        {isPotential && potentials.length === 0 ? (
+          <div className="grid-empty"><p>No potential leads match this filter.</p></div>
+        ) : null}
+        {!isTasks && !isPotential && shown.length === 0 ? (
           <div className="grid-empty">
             <p>{lines.length ? 'No calls match this filter.' : `No follow-up calls were logged on ${dayLong(date)}.`}</p>
           </div>

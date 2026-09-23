@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { addDaysIso, istToday } from '../lib/format';
+import { addDaysIso, istDateFromTimestamp, istToday } from '../lib/format';
 import { AUTOMATIC_REMARK, repNote } from '../lib/notes';
-import { AnalyticsView, type CallLine, type RepDay, type TaskLine } from './analytics-view';
+import { AnalyticsView, type CallLine, type PotentialLine, type RepDay, type TaskLine } from './analytics-view';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +28,11 @@ type RawTask = {
 // shapes are otherwise parallel, which is what makes one screen possible.
 const WATI_TASK_COLUMNS = `id, assigned_to, due_on, assigned_at, completed_at, last_outcome,
   last_called_at, customer_id, display_name, phone_e164`;
+
+// Pending work is read the way the rep's own list reads it — customer and order
+// inner-joined — so a task the rep cannot see is not counted against them.
+const PENDING_COLUMNS = `id, assigned_to, source, due_on, assigned_at, completed_at, last_outcome,
+  last_called_at, customer_id, customers!inner(full_name, phone_e164), orders!inner(id)`;
 
 type RawWatiTask = {
   id: string; assigned_to: string | null; due_on: string; assigned_at: string;
@@ -72,7 +77,7 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
   const start = `${date}T00:00:00+05:30`;
   const end = `${addDaysIso(date, 1)}T00:00:00+05:30`;
 
-  const [calls, reps, assigned, open, numbers, watiCalls, watiAssigned, watiOpen] = await Promise.all([
+  const [calls, reps, assigned, open, numbers, watiCalls, watiAssigned, watiOpen, potential] = await Promise.all([
     db.from('followups')
       .select('id, customer_id, order_id, owner_id, outcome, remark, completed_at, next_due_at, attempt_no, contact_number_id')
       .eq('kind', 'order').gte('completed_at', start).lt('completed_at', end)
@@ -82,21 +87,14 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
     // Full rows, not just owners: the Assigned and Open tiles open these lists.
     db.from('rrr_work_items').select(TASK_COLUMNS)
       .gte('assigned_at', start).lt('assigned_at', end).limit(3000),
-    // Open and due — not the whole backlog.
-    //
-    // User, 21 Sep 2026: "open task m bss wo number dikhana chaiye jitni leads
-    // kisi salesperson ke id m dikh rhi h" and then "dont add upcoming in open
-    // task". A task the rep has already called and dated forward is not work
-    // waiting on them, and counting it made the tile disagree with the number
-    // on their own screen: Tejasv read 72 here against the 32 in his "Aaj ke
-    // calls" tab, the other 40 being follow-ups he had already made and
-    // scheduled.
-    //
-    // So this matches the rep's own list, which is the number being audited.
-    // The forward-dated ones live in their Upcoming tab and are reached from
-    // the day they come due.
-    db.from('rrr_work_items').select(TASK_COLUMNS)
-      .is('completed_at', null).lte('due_on', date).limit(3000),
+    // Pending work: what sits in each rep's "Aaj ke calls" tab right now —
+    // open, due today or earlier, and not already called today. Always live,
+    // whatever day is being audited: yesterday's backlog cannot be rebuilt
+    // from current task state, and the number that matters is what is waiting
+    // on the rep now. Forward-dated follow-ups (their Upcoming tab) are not
+    // pending.
+    db.from('rrr_work_items').select(PENDING_COLUMNS)
+      .is('completed_at', null).lte('due_on', today).limit(5000),
     db.from('contact_numbers').select('id, label_en'),
     db.from('wati_work_calls')
       .select(`id, work_id, owner_id, outcome, note, next_due_on, attempt_no, called_at,
@@ -105,9 +103,14 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
       .order('called_at', { ascending: true }).limit(2000),
     db.from('wati_work_items').select(WATI_TASK_COLUMNS)
       .gte('assigned_at', start).lt('assigned_at', end).limit(3000),
-    // Same rule as the RRR half above: open and due, never upcoming.
+    // Same rule as the RRR half above.
     db.from('wati_work_items').select(WATI_TASK_COLUMNS)
-      .is('completed_at', null).lte('due_on', date).limit(3000),
+      .is('completed_at', null).lte('due_on', today).limit(5000),
+    // Every lead a rep has pinned as potential and nobody has removed. Like
+    // pending work, a standing count rather than one day's.
+    db.from('potential_leads')
+      .select('id, marked_by, source, customer_id, display_name, phone_e164, order_no, note, marked_at')
+      .is('removed_at', null).order('marked_at', { ascending: false }).limit(5000),
   ]);
 
   if (calls.error) {
@@ -215,10 +218,28 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
     ...((assigned.data ?? []) as unknown as RawTask[]).map(toTask),
     ...((watiAssigned.data ?? []) as unknown as RawWatiTask[]).map(toWatiTask),
   ];
+  if (open.error) console.error('[rrr/analytics] pending RRR work unavailable', { error: open.error });
+  if (watiOpen.error) console.error('[rrr/analytics] pending WATI work unavailable', { error: watiOpen.error });
+  const calledToday = (t: TaskLine) => !!t.last_called_at && istDateFromTimestamp(t.last_called_at) === today;
   const openTasks = [
     ...((open.data ?? []) as unknown as RawTask[]).map(toTask),
     ...((watiOpen.data ?? []) as unknown as RawWatiTask[]).map(toWatiTask),
-  ];
+  ].filter((t) => !calledToday(t));
+
+  if (potential.error) console.error('[rrr/analytics] potential leads unavailable', { error: potential.error });
+  const potentialLeads: PotentialLine[] = (potential.data ?? []).map((p) => ({
+    id: p.id,
+    customer_id: p.customer_id,
+    full_name: p.display_name,
+    phone_e164: p.phone_e164,
+    rep_id: p.marked_by,
+    rep_name: repName.get(p.marked_by) ?? 'Other user',
+    source: p.source as PotentialLine['source'],
+    order_no: p.order_no,
+    note: p.note,
+    marked_at: p.marked_at,
+  }));
+  const potentialBy = count(potentialLeads, (p) => p.rep_id);
   const assignedBy = count(assignedTasks, (w) => w.rep_id);
   const openBy = count(openTasks, (w) => w.rep_id);
 
@@ -228,6 +249,7 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
       id, name,
       assigned: assignedBy.get(id) ?? 0,
       open: openBy.get(id) ?? 0,
+      potential: potentialBy.get(id) ?? 0,
       calls: mine.length,
       customers: new Set(mine.map((l) => l.subject_key)).size,
       connected: mine.filter((l) => l.outcome && CONNECTED.has(l.outcome)).length,
@@ -244,5 +266,6 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
   for (const id of others) repDays.push(dayFor(id, lines.find((l) => l.rep_id === id)!.rep_name));
 
   return <AnalyticsView date={date} today={today} reps={repDays} lines={lines}
-    assignedTasks={assignedTasks} openTasks={openTasks} automatic={automatic} />;
+    assignedTasks={assignedTasks} openTasks={openTasks} potentialLeads={potentialLeads}
+    automatic={automatic} />;
 }
