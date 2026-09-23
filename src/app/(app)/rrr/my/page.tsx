@@ -15,7 +15,8 @@ type RawWork = {
   last_called_at: string | null;
   last_outcome: string | null;
   medicine_days_left: number | null;
-  customers: { full_name: string; phone_e164: string; is_dnd: boolean } | null;
+  customers: { full_name: string; phone_e164: string; is_dnd: boolean;
+    lifetime_value: number; lifetime_orders: number; last_order_at: string | null } | null;
   orders: { order_no: string; course_duration_days: number | null;
     delivered_at: string | null; created_at: string;
     /** The tablets in the parcel, for the course length the sheet may not
@@ -33,7 +34,8 @@ type RawWatiWork = {
   last_outcome: string | null;
   medicine_days_left: number | null;
   primary_concern: string | null;
-  customers: { full_name: string; phone_e164: string; is_dnd: boolean } | null;
+  customers: { full_name: string; phone_e164: string; is_dnd: boolean;
+    lifetime_value: number; lifetime_orders: number; last_order_at: string | null } | null;
 };
 
 type RawPotentialLead = {
@@ -58,7 +60,8 @@ export default async function MyRrrWorkPage() {
   const today = istToday();
   const [work, wati, potential, numbers, usualNumber] = await Promise.all([
     db.from('rrr_work_items').select(`id, source, customer_id, order_id, due_on, last_called_at,
-      last_outcome, medicine_days_left, customers!inner(full_name, phone_e164, is_dnd),
+      last_outcome, medicine_days_left,
+      customers!inner(full_name, phone_e164, is_dnd, lifetime_value, lifetime_orders, last_order_at),
       orders!inner(order_no, course_duration_days, delivered_at, created_at,
         order_items(products(default_course_days)))`)
       .eq('assigned_to', user.id).is('completed_at', null)
@@ -68,7 +71,7 @@ export default async function MyRrrWorkPage() {
     // exactly the lead worth calling, and it must not drop out of the list.
     db.from('wati_work_items').select(`id, customer_id, display_name, phone_e164, due_on,
       last_called_at, last_outcome, medicine_days_left, primary_concern,
-      customers(full_name, phone_e164, is_dnd)`)
+      customers(full_name, phone_e164, is_dnd, lifetime_value, lifetime_orders, last_order_at)`)
       .eq('assigned_to', user.id).is('completed_at', null)
       .order('due_on', { ascending: true }).limit(500),
     db.from('potential_leads')
@@ -109,6 +112,9 @@ export default async function MyRrrWorkPage() {
         full_name: item.customers!.full_name,
         phone_e164: item.customers!.phone_e164,
         is_dnd: item.customers!.is_dnd,
+        ltv: Number(item.customers!.lifetime_value),
+        lifetime_orders: item.customers!.lifetime_orders,
+        last_order_at: item.customers!.last_order_at,
         order_no: item.orders!.order_no,
         note: null,
         medicine_ends_on: ends?.on ?? null,
@@ -134,6 +140,10 @@ export default async function MyRrrWorkPage() {
       full_name: item.customers?.full_name ?? item.display_name,
       phone_e164: item.customers?.phone_e164 ?? item.phone_e164,
       is_dnd: item.customers?.is_dnd ?? false,
+      // A number nobody has ordered from yet is worth nothing on record.
+      ltv: Number(item.customers?.lifetime_value ?? 0),
+      lifetime_orders: item.customers?.lifetime_orders ?? 0,
+      last_order_at: item.customers?.last_order_at ?? null,
       order_no: null,
       note: item.primary_concern,
       medicine_ends_on: null,

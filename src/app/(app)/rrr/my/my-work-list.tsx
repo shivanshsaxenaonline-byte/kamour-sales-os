@@ -5,8 +5,10 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { Icon } from '@/components/Icon';
 import { CustomerPanel } from '../customer-panel';
 import { LogCallDialog, type CallTarget, type ContactNumber } from '../log-call-dialog';
-import { dayLong } from '../lib/format';
+import { dayLong, money } from '../lib/format';
 import { outcomeLabel } from '../lib/outcomes';
+import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { SortSelect } from '../sort-select';
 import { markPotentialLead, removePotentialLead } from '../potential-leads-action';
 import { workSourceLabel, workSourceTone, type WorkSource } from '@/lib/work-tags';
 
@@ -26,6 +28,11 @@ export type MyWorkRow = {
   full_name: string;
   phone_e164: string;
   is_dnd: boolean;
+  /** The customer's lifetime value and order count; 0 for a WATI lead who has
+   *  never ordered. */
+  ltv: number;
+  lifetime_orders: number;
+  last_order_at: string | null;
   order_no: string | null;
   /** What the lead came in about, for a WATI row that has no order to show. */
   note: string | null;
@@ -64,6 +71,7 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
 }) {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('due');
   const [calling, setCalling] = useState<CallTarget | null>(null);
   const [viewing, setViewing] = useState<MyWorkRow | null>(null);
   const [viewingPotential, setViewingPotential] = useState<PotentialLeadRow | null>(null);
@@ -120,12 +128,14 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
   const list = searching
     ? rows.filter((row) => !done.has(row.id))
     : tab === 'today' ? pending : tab === 'upcoming' ? upcoming : [];
-  const visible = useMemo(() => list.filter((row) => {
+  const visible = useMemo(() => sortByValue(list.filter((row) => {
     const query = search.trim().toLowerCase();
     const digits = query.replace(/\D/g, '');
     return !query || row.full_name.toLowerCase().includes(query)
       || (digits.length > 0 && row.phone_e164.includes(digits));
-  }), [list, search]);
+  }), sort, (row) => ({
+    ltv: row.ltv, orders: row.lifetime_orders, last_order_at: row.last_order_at, name: row.full_name,
+  })), [list, search, sort]);
   const activePotentialLeads = useMemo(() =>
     potentialLeads.filter((lead) => !localRemoved.has(lead.id)),
     [potentialLeads, localRemoved],
@@ -248,6 +258,7 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
         {message ? <span className="muted" role="status">{message}</span> : null}
       </div>
       <div className="rrr-filters">
+        <div className="rrr-filter-grid">
         <label className="rrr-field wide">
           <span>{tab === 'potential' ? 'Search potential lead' : 'Search assigned customer'}</span>
           <input type="search" value={search} onChange={(event) => setSearch(event.target.value)}
@@ -255,6 +266,11 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
               ? 'Name, phone or salesperson'
               : 'Name or phone — searches Today and Upcoming'} />
         </label>
+        {tab !== 'potential' ? (
+          <SortSelect id="my-work-sort" value={sort} onChange={setSort}
+            first={{ value: 'due', label: 'Due date (default)' }} options={VALUE_SORTS} />
+        ) : null}
+        </div>
       </div>
       <div className="grid-scroll">
         <table className="records-table rrr-table">
@@ -311,7 +327,9 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
               return (
               <tr key={row.id} className="record-row" onClick={() => setViewing(row)}
                 style={{ cursor: 'pointer' }}>
-                <td><strong>{row.full_name}</strong><br /><span className="muted">{row.phone_e164}</span></td>
+                <td><strong>{row.full_name}</strong><br /><span className="muted">{row.phone_e164}</span>
+                  {row.lifetime_orders ? <><br /><span className="muted">
+                    LTV {money(row.ltv)} · {row.lifetime_orders} {row.lifetime_orders === 1 ? 'order' : 'orders'}</span></> : null}</td>
                 <td><span className={`status-pill ${workSourceTone(row.source)}`}>
                   {workSourceLabel(row.source)}
                 </span></td>

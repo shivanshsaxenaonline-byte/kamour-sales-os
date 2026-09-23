@@ -3,7 +3,10 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { workSourceLabel, workSourceTone, type WorkSource } from '@/lib/work-tags';
 import { dayLong } from '../lib/format';
+import { money } from '../lib/format';
 import { outcomeLabel } from '../lib/outcomes';
+import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { WorkSort } from './work-sort';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +18,7 @@ type Item = {
   last_outcome: string | null;
   medicine_days_left: number | null;
   completed_at: string | null;
-  customers: { full_name: string; phone_e164: string } | null;
+  customers: { full_name: string; phone_e164: string } & CustomerValue | null;
   orders: { order_no: string } | null;
 };
 
@@ -29,7 +32,10 @@ type WatiItem = {
   display_name: string;
   phone_e164: string;
   primary_concern: string | null;
+  customers: CustomerValue | null;
 };
+
+type CustomerValue = { lifetime_value: number; lifetime_orders: number; last_order_at: string | null };
 
 /** One row of the table, whichever table it came from. */
 type Row = {
@@ -44,9 +50,16 @@ type Row = {
   completed_at: string | null;
   last_outcome: string | null;
   medicine_days_left: number | null;
+  ltv: number;
+  lifetime_orders: number;
+  last_order_at: string | null;
 };
 
-export default async function RrrAssignedWorkPage() {
+export default async function RrrAssignedWorkPage(
+  { searchParams }: { searchParams: Promise<{ sort?: string }> },
+) {
+  const asked = (await searchParams).sort ?? '';
+  const sort = VALUE_SORTS.some((o) => o.value === asked) ? asked : 'due';
   const db = await createClient();
   const { data: { user } } = await db.auth.getUser();
   if (!user) redirect('/login');
@@ -56,9 +69,9 @@ export default async function RrrAssignedWorkPage() {
     redirect('/');
 
   const select = `id,source,assigned_to,due_on,last_outcome,medicine_days_left,completed_at,
-    customers!inner(full_name,phone_e164),orders!inner(order_no)`;
+    customers!inner(full_name,phone_e164,lifetime_value,lifetime_orders,last_order_at),orders!inner(order_no)`;
   const watiSelect = `id,assigned_to,due_on,last_outcome,medicine_days_left,completed_at,
-    display_name,phone_e164,primary_concern`;
+    display_name,phone_e164,primary_concern,customers(lifetime_value,lifetime_orders,last_order_at)`;
   const [active, completed, watiActive, watiCompleted, reps] = await Promise.all([
     db.from('rrr_work_items').select(select).is('completed_at', null)
       .order('due_on', { ascending: true }).limit(500),
@@ -92,6 +105,9 @@ export default async function RrrAssignedWorkPage() {
       completed_at: item.completed_at,
       last_outcome: item.last_outcome,
       medicine_days_left: item.medicine_days_left,
+      ltv: Number(item.customers?.lifetime_value ?? 0),
+      lifetime_orders: item.customers?.lifetime_orders ?? 0,
+      last_order_at: item.customers?.last_order_at ?? null,
     }));
   const watiRows = ([...(watiActive.data ?? []), ...(watiCompleted.data ?? [])] as unknown as WatiItem[])
     .map((item): Row => ({
@@ -105,8 +121,13 @@ export default async function RrrAssignedWorkPage() {
       completed_at: item.completed_at,
       last_outcome: item.last_outcome,
       medicine_days_left: item.medicine_days_left,
+      ltv: Number(item.customers?.lifetime_value ?? 0),
+      lifetime_orders: item.customers?.lifetime_orders ?? 0,
+      last_order_at: item.customers?.last_order_at ?? null,
     }));
-  const items = [...rrrRows, ...watiRows];
+  const items = sortByValue([...rrrRows, ...watiRows], sort, (item) => ({
+    ltv: item.ltv, orders: item.lifetime_orders, last_order_at: item.last_order_at, name: item.name,
+  }));
   const openCount = (active.data?.length ?? 0) + (watiActive.data?.length ?? 0);
   const doneCount = (completed.data?.length ?? 0) + (watiCompleted.data?.length ?? 0);
 
@@ -117,13 +138,17 @@ export default async function RrrAssignedWorkPage() {
         <Link href="/rrr/work" className="active" aria-current="page">Assigned work</Link>
         <Link href="/rrr/analytics">Analytics</Link></div>
       <span className="muted">{openCount} active · {doneCount} recently completed</span>
+      <div className="toolbar-spacer" />
+      <WorkSort value={sort} />
     </div>
     <div className="grid-scroll"><table className="records-table rrr-table">
       <thead><tr><th>Customer</th><th>Source</th><th>Order / lead</th><th>Assigned to</th>
         <th>Due / status</th><th>Last outcome</th></tr></thead>
       <tbody>{items.map((item) => <tr key={`${item.source}-${item.id}`} className="record-row">
         <td><strong>{item.name}</strong><br />
-          <span className="muted">{item.phone}</span></td>
+          <span className="muted">{item.phone}</span>
+          {item.lifetime_orders ? <><br /><span className="muted">
+            LTV {money(item.ltv)} · {item.lifetime_orders} {item.lifetime_orders === 1 ? 'order' : 'orders'}</span></> : null}</td>
         <td><span className={`status-pill ${workSourceTone(item.source)}`}>
           {workSourceLabel(item.source)}</span></td>
         <td>{item.about}</td>

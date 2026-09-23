@@ -8,6 +8,7 @@ import { refreshAiLeads } from './ai-leads-actions';
 import { resolveMatchingIds } from './select-all-action';
 import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
 import { CustomerPanel } from './customer-panel';
+import { SortSelect } from './sort-select';
 import { dayInYear, dayMaybeYear, dayShort, daysBetween, digitsOf, istDateFromTimestamp, initials, isOtherYear, money, timeLabel } from './lib/format';
 import { outcomeLabel, outcomeTone } from './lib/outcomes';
 import {
@@ -98,6 +99,25 @@ function followUpState(r: RrrRow, today: string) {
 }
 
 const TYPING = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
+
+/** The AI list's sorts, in the same vocabulary (and URL values) as the
+ *  All-customers list, so `?sort=value` means the same thing on both. `queue`
+ *  is the generator's own rank here and is left as the rows arrive. */
+const AI_SORT_FIRST = { value: 'queue', label: 'AI priority (default)' };
+const AI_SORTS = SORTS.filter((o) => o.value !== 'queue')
+  .map((o) => (o.value === 'value' ? { ...o, label: 'Highest LTV first' } : o));
+// A customer with no value on record sorts last whichever way the list runs.
+const nullsLast = <T,>(a: T | null, b: T | null, cmp: (x: T, y: T) => number) =>
+  a == null ? (b == null ? 0 : 1) : b == null ? -1 : cmp(a, b);
+const AI_ORDER: Record<string, (a: AiLeadRow, b: AiLeadRow) => number> = {
+  value: (a, b) => b.lifetime_value - a.lifetime_value || a.rank - b.rank,
+  orders: (a, b) => b.lifetime_orders - a.lifetime_orders || b.lifetime_value - a.lifetime_value,
+  aov: (a, b) => nullsLast(a.aov, b.aov, (x, y) => y - x),
+  recent: (a, b) => nullsLast(a.days_since_order, b.days_since_order, (x, y) => x - y),
+  stale: (a, b) => nullsLast(a.days_since_order, b.days_since_order, (x, y) => y - x),
+  due: (a, b) => nullsLast(a.next_due_on, b.next_due_on, (x, y) => x.localeCompare(y)),
+  name: (a, b) => a.full_name.localeCompare(b.full_name),
+};
 
 export function RrrTable({
   mode, rows, aiLeads, filters, page, pageSize, matched, counts, aiRun, reps,
@@ -214,13 +234,14 @@ export function RrrTable({
   // ---- what is on screen -------------------------------------------------
   // On the All tab the server already filtered, sorted and paged, so `rows` IS
   // the page. On the AI tab the whole day is in hand (45 rows at the current
-  // cap) and the generator's ranking is the product — it is never re-sorted,
-  // only narrowed.
+  // cap). The generator's ranking is the default order; the Sort dropdown can
+  // re-order the day by value (LTV first, most orders…) for whoever is
+  // choosing who to hand out first.
   const filtered = useMemo(() => {
     if (!isAi) return rows;
     const q = filters.search.trim().toLowerCase();
     const digits = digitsOf(q);
-    return aiLeads.filter((a) => {
+    const kept = aiLeads.filter((a) => {
       // In this list "owner" means who is calling them TODAY, not who owns the
       // customer — that is the whole point of the daily deal.
       if (filters.owner === 'unassigned' && a.ai_owner_id) return false;
@@ -233,7 +254,9 @@ export function RrrTable({
       }
       return true;
     });
-  }, [isAi, rows, aiLeads, filters.search, filters.owner, filters.bucket]);
+    const compare = AI_ORDER[filters.sort];
+    return compare ? [...kept].sort(compare) : kept;
+  }, [isAi, rows, aiLeads, filters.search, filters.owner, filters.bucket, filters.sort]);
 
   const total = isAi ? filtered.length : matched;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -526,6 +549,9 @@ export function RrrTable({
               <option value="unassigned">Unassigned only</option>
               {reps.map((r) => <option key={r.id} value={r.id}>{r.full_name}</option>)}
             </select>
+
+            <SortSelect id="rrr-ai-sort" inToolbar value={filters.sort}
+              onChange={(v) => setFilter('sort', v)} first={AI_SORT_FIRST} options={AI_SORTS} />
           </>
         ) : (
           <button

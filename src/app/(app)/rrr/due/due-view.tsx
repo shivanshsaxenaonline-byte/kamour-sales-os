@@ -4,14 +4,20 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { assignRrrWork } from '../actions';
 import { CustomerPanel } from '../customer-panel';
-import { dayInYear, digitsOf } from '../lib/format';
+import { dayInYear, digitsOf, money } from '../lib/format';
 import { outcomeLabel, outcomeTone } from '../lib/outcomes';
+import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { SortSelect } from '../sort-select';
 
 export type DueRow = {
   id: string;
   customer_id: string;
   full_name: string;
   phone_e164: string;
+  /** The customer's lifetime value and order count, across every order. */
+  ltv: number;
+  lifetime_orders: number;
+  last_order_at: string | null;
   due_on: string;
   overdue_days: number;
   attempt_no: number;
@@ -51,6 +57,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
   const [reason, setReason] = useState('all');
   const [rep, setRep] = useState('all');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('overdue');
   const [open, setOpen] = useState<DueRow | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [target, setTarget] = useState('');
@@ -64,7 +71,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     const digits = digitsOf(q);
-    return rows.filter((r) => {
+    const kept = rows.filter((r) => {
       if (when === 'today' && r.overdue_days > 0) return false;
       if (when === 'overdue' && r.overdue_days === 0) return false;
       if (reason !== 'all' && (r.reason ?? 'none') !== reason) return false;
@@ -73,7 +80,10 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
       if (q && !r.full_name.toLowerCase().includes(q) && !(digits && digitsOf(r.phone_e164).includes(digits))) return false;
       return true;
     }).sort((a, b) => b.overdue_days - a.overdue_days || a.full_name.localeCompare(b.full_name));
-  }, [rows, when, reason, rep, search]);
+    return sortByValue(kept, sort, (r) => ({
+      ltv: r.ltv, orders: r.lifetime_orders, last_order_at: r.last_order_at, name: r.full_name,
+    }));
+  }, [rows, when, reason, rep, search, sort]);
 
   // The header box covers what the filters show; selection outside it stays.
   const shownIds = useMemo(() => shown.map((r) => r.customer_id), [shown]);
@@ -153,6 +163,8 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
           <option value="unassigned">Not assigned</option>
           {reps.map((r) => <option key={r.id} value={r.full_name}>{r.full_name}</option>)}
         </select>
+        <SortSelect id="due-sort" inToolbar value={sort} onChange={setSort}
+          first={{ value: 'overdue', label: 'Most overdue first (default)' }} options={VALUE_SORTS} />
       </div>
 
       {canAssign ? (
@@ -183,6 +195,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
                 </th>
               ) : null}
               <th>Customer</th>
+              <th className="num">LTV</th>
               <th>Due</th>
               <th>Kyun aaj?</th>
               <th>Pichhli call</th>
@@ -210,6 +223,8 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
                       </span>
                     </button>
                   </td>
+                  <td className="num">{money(r.ltv)}
+                    <br /><span className="muted">{r.lifetime_orders} {r.lifetime_orders === 1 ? 'order' : 'orders'}</span></td>
                   <td>
                     <span className={`status-pill ${r.overdue_days === 0 ? 'attention' : 'critical'}`}>
                       {r.overdue_days === 0 ? 'Aaj' : `${r.overdue_days}d overdue`}

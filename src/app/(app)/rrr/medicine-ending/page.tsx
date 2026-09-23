@@ -17,7 +17,7 @@ const COLUMNS = `
   delivered_at,
   created_at,
   order_items(products(default_course_days)),
-  customers!inner(full_name, phone_e164, is_dnd, merged_into_id)
+  customers!inner(full_name, phone_e164, is_dnd, merged_into_id, lifetime_value, lifetime_orders, last_order_at)
 `;
 
 type RawOrder = {
@@ -34,6 +34,9 @@ type RawOrder = {
     phone_e164: string;
     is_dnd: boolean;
     merged_into_id: string | null;
+    lifetime_value: number;
+    lifetime_orders: number;
+    last_order_at: string | null;
   } | null;
 };
 
@@ -316,6 +319,9 @@ export default async function MedicineEndingPage() {
         phone_e164: customer.phone_e164,
         is_dnd: customer.is_dnd,
         amount: Number(o.amount),
+        ltv: Number(customer.lifetime_value),
+        lifetime_orders: customer.lifetime_orders,
+        last_order_at: customer.last_order_at,
         course_duration_days: course,
         delivered_on: deliveredOn,
         ends_on: endsOn,

@@ -8,6 +8,8 @@ import { CustomerPanel } from '../customer-panel';
 import { assignRrrWork } from '../actions';
 import { dayLong as day, digitsOf, istDateFromTimestamp, money } from '../lib/format';
 import { outcomeLabel } from '../lib/outcomes';
+import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { SortSelect } from '../sort-select';
 
 export type MedicineEndingRow = {
   order_id: string;
@@ -17,6 +19,10 @@ export type MedicineEndingRow = {
   phone_e164: string;
   is_dnd: boolean;
   amount: number;
+  /** The customer's lifetime value and order count, across every order. */
+  ltv: number;
+  lifetime_orders: number;
+  last_order_at: string | null;
   course_duration_days: number;
   delivered_on: string;
   ends_on: string;
@@ -67,6 +73,7 @@ export function MedicineEndingTable({
   const [search, setSearch] = useState('');
   const [duration, setDuration] = useState('all');
   const [window, setWindow] = useState('action');
+  const [sort, setSort] = useState('ending');
   const [calling, setCalling] = useState<CallTarget | null>(null);
   const [openRow, setOpenRow] = useState<MedicineEndingRow | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -77,7 +84,7 @@ export function MedicineEndingTable({
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     const digits = digitsOf(q);
-    return rows.filter((r) => {
+    const kept = rows.filter((r) => {
       if (duration !== 'all' && r.course_duration_days !== Number(duration)) return false;
       if (window === 'action'
         && (r.days_left < -ACTION_OVERDUE_DAYS || r.days_left > ACTION_LEAD_DAYS)) return false;
@@ -91,7 +98,12 @@ export function MedicineEndingTable({
       }
       return true;
     });
-  }, [rows, search, duration, window]);
+    // The rows arrive ending-soonest first; "amount" is this order's value.
+    if (sort === 'amount') return [...kept].sort((a, b) => b.amount - a.amount);
+    return sortByValue(kept, sort, (r) => ({
+      ltv: r.ltv, orders: r.lifetime_orders, last_order_at: r.last_order_at, name: r.full_name,
+    }));
+  }, [rows, search, duration, window, sort]);
 
   const actionCount = rows.filter((r) =>
     r.days_left >= -ACTION_OVERDUE_DAYS && r.days_left <= ACTION_LEAD_DAYS).length;
@@ -183,6 +195,10 @@ export function MedicineEndingTable({
               <option value="30">30 days</option>
             </select>
           </label>
+          <SortSelect id="medicine-ending-sort" value={sort} onChange={setSort}
+            first={{ value: 'ending', label: 'Ending soonest (default)' }}
+            options={[...VALUE_SORTS.slice(0, 2), { value: 'amount', label: 'Highest order amount first' },
+              ...VALUE_SORTS.slice(2)]} />
         </div>
       </div>
 
@@ -194,6 +210,7 @@ export function MedicineEndingTable({
               <th>Customer</th>
               <th>Order</th>
               <th className="num">Amount</th>
+              <th className="num">LTV</th>
               <th>Delivered</th>
               <th>Course</th>
               <th>Expected ending</th>
@@ -230,6 +247,8 @@ export function MedicineEndingTable({
                   </td>
                   <td>{r.order_no}</td>
                   <td className="num">{money(r.amount)}</td>
+                  <td className="num">{money(r.ltv)}
+                    <br /><span className="muted">{r.lifetime_orders} {r.lifetime_orders === 1 ? 'order' : 'orders'}</span></td>
                   <td>{day(r.delivered_on)}</td>
                   <td>{r.course_duration_days} days</td>
                   <td>{day(r.ends_on)}

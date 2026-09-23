@@ -91,13 +91,14 @@ export default async function DueTodayPage() {
 
   // The customer, their latest call, their latest order, and who holds the task.
   type Call = { id: string; outcome: string | null; remark: string | null; completed_at: string; owner_id: string | null; next_due_at: string | null; attempt_no: number };
-  const customers = new Map<string, { full_name: string; phone_e164: string; is_dnd: boolean; merged_into_id: string | null }>();
+  const customers = new Map<string, { full_name: string; phone_e164: string; is_dnd: boolean; merged_into_id: string | null;
+    lifetime_value: number; lifetime_orders: number; last_order_at: string | null }>();
   const lastCall = new Map<string, Call>();
   const lastOrder = new Map<string, string>();
   const work = new Map<string, { assigned_to: string | null; assigned_at: string; last_outcome: string | null }>();
   for (const part of chunks(ids, 100)) {
     const [c, calls, orders, tasks] = await Promise.all([
-      db.from('customers').select('id, full_name, phone_e164, is_dnd, merged_into_id').in('id', part),
+      db.from('customers').select('id, full_name, phone_e164, is_dnd, merged_into_id, lifetime_value, lifetime_orders, last_order_at').in('id', part),
       db.from('followups').select('id, customer_id, outcome, remark, completed_at, owner_id, next_due_at, attempt_no')
         .eq('kind', 'order').in('customer_id', part).not('completed_at', 'is', null)
         .order('completed_at', { ascending: false }).limit(5000),
@@ -138,6 +139,9 @@ export default async function DueTodayPage() {
       customer_id: customerId,
       full_name: customer.full_name,
       phone_e164: customer.phone_e164,
+      ltv: Number(customer.lifetime_value),
+      lifetime_orders: customer.lifetime_orders,
+      last_order_at: customer.last_order_at,
       due_on: dueOn,
       overdue_days: Math.max(0, daysBetween(dueOn, today)),
       attempt_no: open?.attempt_no ?? (prev ? prev.attempt_no + 1 : 1),
