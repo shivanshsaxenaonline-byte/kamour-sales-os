@@ -1,0 +1,1 @@
+-- Permanent customer-data erasure cannot be reversed.
