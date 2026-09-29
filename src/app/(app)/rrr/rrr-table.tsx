@@ -78,8 +78,10 @@ export type WorkAssignment = {
  *  line the lead generator's `active` bucket uses. */
 function activity(days: number | null) {
   if (days == null) return { text: 'No orders', tone: 'dashed' };
-  if (days <= 90) return { text: 'Active', tone: 'positive' };
-  return { text: `${days}d inactive`, tone: days > 180 ? 'critical' : 'attention' };
+  if (days <= 30) return { text: 'Active', tone: 'positive' };
+  if (days <= 90) return { text: 'Inactive', tone: 'neutral' };
+  if (days <= 180) return { text: 'Cold', tone: 'attention' };
+  return { text: 'Dormant', tone: 'critical' };
 }
 
 /** What the follow-up state means today, not what it meant when it was set.
@@ -901,7 +903,7 @@ export function RrrTable({
                       <span className={`status-pill ${act.tone}`}>
                         {r.days_since_order == null
                           ? act.text
-                          : `${r.days_since_order <= 90 ? 'Active' : 'Inactive'} · ${r.days_since_order} ${r.days_since_order === 1 ? 'day' : 'days'} ago`}
+                          : `${act.text} · ${r.days_since_order} ${r.days_since_order === 1 ? 'day' : 'days'} ago`}
                       </span>
                     </td>
                     <td>

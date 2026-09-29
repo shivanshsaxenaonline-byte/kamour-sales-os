@@ -59,12 +59,10 @@ export const PAYMENTS = [
 // filters on can never disagree.
 export const ACTIVITIES = [
   { value: 'all', label: 'All activity stages' },
-  { value: 'active', label: 'Active · ordered within 90d' },
-  // Both halves of "gone quiet" as one option, because that is the line the
-  // screen drew before this panel existed and the floor still asks for it.
-  { value: 'inactive', label: 'Inactive · 90d+' },
-  { value: 'cooling', label: 'Cooling · 91–180d' },
-  { value: 'dormant', label: 'Inactive · 180d+' },
+  { value: 'active', label: 'Active · 0–30d' },
+  { value: 'inactive', label: 'Inactive · 31–90d' },
+  { value: 'cold', label: 'Cold · 91–180d' },
+  { value: 'dormant', label: 'Dormant · 180d+' },
   { value: 'never', label: 'No orders on record' },
 ];
 
@@ -271,11 +269,13 @@ export function filterOps(filters: Filters, today: string): FilterOp[] {
     ops.push({ kind: 'eq', col: 'payment_profile', val: filters.payment });
 
   switch (filters.activity) {
-    case 'active': ops.push({ kind: 'lte', col: 'days_since_order', val: 90 }); break;
+    case 'active': ops.push({ kind: 'lte', col: 'days_since_order', val: 30 }); break;
     // NULL compares as unknown, so "no orders on record" is excluded from every
     // band except its own — the same behaviour the client-side version had.
-    case 'inactive': ops.push({ kind: 'gt', col: 'days_since_order', val: 90 }); break;
-    case 'cooling': ops.push(
+    case 'inactive': ops.push(
+      { kind: 'gt', col: 'days_since_order', val: 30 },
+      { kind: 'lte', col: 'days_since_order', val: 90 }); break;
+    case 'cold': ops.push(
       { kind: 'gt', col: 'days_since_order', val: 90 },
       { kind: 'lte', col: 'days_since_order', val: 180 }); break;
     case 'dormant': ops.push({ kind: 'gt', col: 'days_since_order', val: 180 }); break;
