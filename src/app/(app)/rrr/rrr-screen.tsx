@@ -3,6 +3,7 @@ import { getServerViewer } from '@/lib/supabase/viewer';
 import { RrrTable, type RrrRow, type AiLeadRow, type AiRun, type Rep, type WorkAssignment } from './rrr-table';
 import type { ContactNumber } from './log-call-dialog';
 import { istToday } from './lib/format';
+import { MAX_DAYS_SINCE_ORDER } from './lib/priority';
 import { PAGE_SIZE, parseFilters, parsePage, type QueryParams } from './lib/filters';
 import { AI_COLUMNS, fetchRrrPage } from './lib/query';
 
@@ -41,7 +42,9 @@ export async function RrrScreen({ mode, params }: { mode: 'all' | 'ai'; params: 
   // shapes, and a union of them would have to be cast apart again downstream.
   const queuePromise = isAi ? null : fetchRrrPage(supabase, filters, today, page);
   const aiPromise = isAi
-    ? supabase.from('v_rrr_ai_leads').select(AI_COLUMNS).eq('run_on', today).order('rank')
+    // Leads dealt before the 180-day window came in are left off here too.
+    ? supabase.from('v_rrr_ai_leads').select(AI_COLUMNS).eq('run_on', today)
+      .lte('days_since_order', MAX_DAYS_SINCE_ORDER).order('rank')
     : null;
 
   const [allCount, aiCount, queue, ai, aiRun, numbers, usualNumber, reps, work] = await Promise.all([
@@ -49,7 +52,7 @@ export async function RrrScreen({ mode, params }: { mode: 'all' | 'ai'; params: 
     // the count and no rows, so the list you are NOT looking at costs nothing.
     supabase.from('v_rrr_queue').select('customer_id', { count: 'exact', head: true }),
     supabase.from('v_rrr_ai_leads').select('customer_id', { count: 'exact', head: true })
-      .eq('run_on', today),
+      .eq('run_on', today).lte('days_since_order', MAX_DAYS_SINCE_ORDER),
 
     queuePromise,
     aiPromise,

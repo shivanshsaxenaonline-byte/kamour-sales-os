@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { addDaysIso, istDateFromTimestamp, istToday } from '../lib/format';
 import { AUTOMATIC_REMARK, repNote } from '../lib/notes';
+import { rrrWindowStart } from '../lib/priority';
 import { AnalyticsView, type CallLine, type PotentialLine, type RepDay, type TaskLine } from './analytics-view';
 
 export const dynamic = 'force-dynamic';
@@ -93,8 +94,11 @@ export default async function RrrAnalyticsPage({ searchParams }: { searchParams:
     // from current task state, and the number that matters is what is waiting
     // on the rep now. Forward-dated follow-ups (their Upcoming tab) are not
     // pending.
+    // Past the 180-day window a task is not on the rep's list (see
+    // MAX_DAYS_SINCE_ORDER), so it is not pending against them either.
     db.from('rrr_work_items').select(PENDING_COLUMNS)
-      .is('completed_at', null).lte('due_on', today).limit(5000),
+      .is('completed_at', null).lte('due_on', today)
+      .gte('customers.last_order_at', rrrWindowStart(today)).limit(5000),
     db.from('contact_numbers').select('id, label_en'),
     db.from('wati_work_calls')
       .select(`id, work_id, owner_id, outcome, note, next_due_on, attempt_no, called_at,

@@ -103,14 +103,6 @@ function safeAge(raw: string | null): number | null {
   return Number.isInteger(value) && value > 0 && value <= 120 ? value : null;
 }
 
-function ownerId(value: string | null, users: Map<string, string>) {
-  const key = normalized(value).replace('sheryansh', 'shreyansh');
-  if (!key) return null;
-  if (users.has(key)) return users.get(key) ?? null;
-  for (const [name, id] of users) if (key.includes(name) || name.includes(key)) return id;
-  return null;
-}
-
 function indexHeaders(headers: string[]) {
   return new Map(headers.map((header, index) => [normalized(header), index]));
 }
@@ -120,7 +112,7 @@ function valueAt(values: string[], indexes: Map<string, number>, header: string)
   return index == null ? undefined : values[index];
 }
 
-function parseRows(csv: string, users: Map<string, string>) {
+function parseRows(csv: string) {
   const matrix = parseCsv(csv.replace(/^\uFEFF/, ''));
   const headers = matrix[0]?.map(header => header.trim()) ?? [];
   const indexes = indexHeaders(headers);
@@ -188,7 +180,9 @@ function parseRows(csv: string, users: Map<string, string>) {
       followup_count: completed.length,
       last_followup_on: dated[0]?.occurredOn ?? null,
       last_followup_summary: completed.at(-1)?.raw ?? null,
-      owner_id: ownerId(joinedBy ?? takenBy, users),
+      // Keep the raw Joined By / Taken By values above for context, but do
+      // not turn sheet data into a salesperson assignment.
+      owner_id: null,
       source_snapshot: snapshot,
       is_active: true,
       last_synced_at: new Date().toISOString(),
@@ -215,10 +209,7 @@ export async function syncPocConsultationSheet(): Promise<PocSyncResult> {
   try {
     const response = await fetch(CSV_URL, { cache: 'no-store' });
     if (!response.ok) throw new Error(`POC sheet returned ${response.status}.`);
-    const { data: people, error: peopleError } = await db.from('users').select('id,full_name').eq('is_active', true).in('role', ['sales_exec', 'sales_manager']).range(0, 199);
-    if (peopleError) throw new Error(peopleError.message);
-    const users = new Map((people ?? []).map(person => [normalized(person.full_name), person.id]));
-    const { rows, rowsSeen } = parseRows(await response.text(), users);
+    const { rows, rowsSeen } = parseRows(await response.text());
     const identities = new Set(rows.map(row => row.source_identity as string));
 
     for (let index = 0; index < rows.length; index += 100) {

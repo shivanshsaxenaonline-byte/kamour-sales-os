@@ -479,7 +479,6 @@ export async function syncMedicineOrderSheet(): Promise<SyncResult> {
             state: snapshot.state,
             first_source_id: sourceId,
             original_owner_id: ownerId,
-            current_owner_id: ownerId,
           })
           .select("id,phone_e164,full_name,age,address,pincode,city,state,current_owner_id,original_owner_id")
           .single();
@@ -585,7 +584,6 @@ export async function syncMedicineOrderSheet(): Promise<SyncResult> {
         is_repeat: snapshot.is_repeat,
         is_legacy: true,
         original_owner_id: ownerId,
-        current_owner_id: ownerId,
         order_notes: snapshot.order_notes,
         ad_code: snapshot.ad_code,
         gclid: snapshot.gclid,
@@ -628,7 +626,6 @@ export async function syncMedicineOrderSheet(): Promise<SyncResult> {
           ad_code: "ad_code",
           gclid: "gclid",
           order_date: "created_at",
-          owner_id: "current_owner_id",
         };
         for (const [sourceKey, targetKey] of Object.entries(orderFields)) {
           if (!changed(previous, snapshot, sourceKey)) continue;

@@ -9,6 +9,8 @@ import { resolveMatchingIds } from './select-all-action';
 import { LogCallDialog, type CallTarget, type ContactNumber } from './log-call-dialog';
 import { CustomerPanel } from './customer-panel';
 import { SortSelect } from './sort-select';
+import { PriorityPill } from './priority-pill';
+import { isPromise, priorityOf, sortByPriority, type Priority } from './lib/priority';
 import { dayInYear, dayMaybeYear, dayShort, daysBetween, digitsOf, istDateFromTimestamp, initials, isOtherYear, money, timeLabel } from './lib/format';
 import { outcomeLabel, outcomeTone } from './lib/outcomes';
 import {
@@ -103,7 +105,7 @@ const TYPING = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 /** The AI list's sorts, in the same vocabulary (and URL values) as the
  *  All-customers list, so `?sort=value` means the same thing on both. `queue`
  *  is the generator's own rank here and is left as the rows arrive. */
-const AI_SORT_FIRST = { value: 'queue', label: 'AI priority (default)' };
+const AI_SORT_FIRST = { value: 'queue', label: 'P1 → P2 → P3, then AI rank (default)' };
 const AI_SORTS = SORTS.filter((o) => o.value !== 'queue')
   .map((o) => (o.value === 'value' ? { ...o, label: 'Highest LTV first' } : o));
 // A customer with no value on record sorts last whichever way the list runs.
@@ -118,6 +120,16 @@ const AI_ORDER: Record<string, (a: AiLeadRow, b: AiLeadRow) => number> = {
   due: (a, b) => nullsLast(a.next_due_on, b.next_due_on, (x, y) => x.localeCompare(y)),
   name: (a, b) => a.full_name.localeCompare(b.full_name),
 };
+
+/** P1/P2/P3 for an AI lead. The course end is the view's own date, the same
+ *  one the generator's refill window is built on. */
+function aiPriority(a: AiLeadRow, today: string): Priority {
+  const left = a.medicine_ends_on ? daysBetween(today, a.medicine_ends_on) : null;
+  return priorityOf({
+    daysSinceOrder: a.days_since_order, orders: a.lifetime_orders, ltv: a.lifetime_value,
+    promise: isPromise(a.last_outcome), courseEnding: left != null && left >= -10 && left <= 3,
+  });
+}
 
 export function RrrTable({
   mode, rows, aiLeads, filters, page, pageSize, matched, counts, aiRun, reps,
@@ -255,8 +267,9 @@ export function RrrTable({
       return true;
     });
     const compare = AI_ORDER[filters.sort];
-    return compare ? [...kept].sort(compare) : kept;
-  }, [isAi, rows, aiLeads, filters.search, filters.owner, filters.bucket, filters.sort]);
+    // The default keeps the generator's rank inside each tier.
+    return compare ? [...kept].sort(compare) : sortByPriority(kept, (a) => aiPriority(a, today));
+  }, [isAi, rows, aiLeads, filters.search, filters.owner, filters.bucket, filters.sort, today]);
 
   const total = isAi ? filtered.length : matched;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -860,6 +873,7 @@ export function RrrTable({
                           <span className="muted">{r.phone_e164}</span>
                         </span>
                       </button>
+                      <PriorityPill priority={aiPriority(ai, today)} days={r.days_since_order} />
                     </td>
                     <td className="num">{money(r.lifetime_value)}</td>
                     <td>

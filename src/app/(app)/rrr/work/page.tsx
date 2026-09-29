@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { workSourceLabel, workSourceTone, type WorkSource } from '@/lib/work-tags';
 import { dayLong } from '../lib/format';
-import { money } from '../lib/format';
+import { istToday, money } from '../lib/format';
+import { rrrWindowStart } from '../lib/priority';
 import { outcomeLabel } from '../lib/outcomes';
 import { sortByValue, VALUE_SORTS } from '../lib/sort';
 import { WorkSort } from './work-sort';
@@ -73,7 +74,10 @@ export default async function RrrAssignedWorkPage(
   const watiSelect = `id,assigned_to,due_on,last_outcome,medicine_days_left,completed_at,
     display_name,phone_e164,primary_concern,customers(lifetime_value,lifetime_orders,last_order_at)`;
   const [active, completed, watiActive, watiCompleted, reps] = await Promise.all([
+    // Open work past the 180-day window is off the reps' lists, so off this
+    // one too — see MAX_DAYS_SINCE_ORDER.
     db.from('rrr_work_items').select(select).is('completed_at', null)
+      .gte('customers.last_order_at', rrrWindowStart(istToday()))
       .order('due_on', { ascending: true }).limit(500),
     db.from('rrr_work_items').select(select).not('completed_at', 'is', null)
       .order('completed_at', { ascending: false }).limit(100),

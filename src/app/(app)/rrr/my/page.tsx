@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getServerViewer } from '@/lib/supabase/viewer';
 import { medicineEnds, istDateFromTimestamp, istToday } from '../lib/format';
+import { rrrWindowStart } from '../lib/priority';
 import type { ContactNumber } from '../log-call-dialog';
 import { MyWorkList, type MyWorkRow, type PotentialLeadRow } from './my-work-list';
 
@@ -65,6 +66,10 @@ export default async function MyRrrWorkPage() {
       orders!inner(order_no, course_duration_days, delivered_at, created_at,
         order_items(products(default_course_days)))`)
       .eq('assigned_to', user.id).is('completed_at', null)
+      // Past 180 days since the last order the task stays open but is not a
+      // call — see MAX_DAYS_SINCE_ORDER. Analytics' pending count reads the
+      // same way, so nothing is counted against a rep that they cannot see.
+      .gte('customers.last_order_at', rrrWindowStart(today))
       .order('due_on', { ascending: true }).limit(500),
     // Leads Alka handed over from WATI Interested. Left-joined to customers,
     // not inner: an interested chat from a number nobody has ordered from is

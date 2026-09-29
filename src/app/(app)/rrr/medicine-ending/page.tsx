@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import type { ContactNumber } from '../log-call-dialog';
 import { addDaysIso, courseDays, daysBetween, istDateFromTimestamp, istToday } from '../lib/format';
+import { isPastRrrWindow } from '../lib/priority';
 import { MedicineEndingTable, type MedicineEndingRow } from './medicine-ending-table';
 
 const CAN_ASSIGN = ['admin', 'ceo', 'coo', 'auditor'];
@@ -123,12 +124,10 @@ export default async function MedicineEndingPage() {
       .not('customer_id', 'is', null)
       .gte('last_called_at', sinceYesterday)
       .limit(1000),
-    // Calls where the customer said how much medicine is actually left, and
-    // the follow-ups those calls booked. See statedEndsOn below for why this
-    // beats delivery date + course length. Both are small — 55 such calls in
-    // the last year, 188 open follow-ups — so neither needs narrowing.
+    // Calls where the customer said how much medicine is actually left. See
+    // statedEndsOn below for why this beats delivery date + course length.
     supabase.from('followups')
-      .select('customer_id, completed_at')
+      .select('customer_id, completed_at, remark')
       .eq('outcome', 'medicine_not_finished')
       .not('completed_at', 'is', null)
       .gte('completed_at', `${addDaysIso(today, -365)}T00:00:00+05:30`)
@@ -183,24 +182,19 @@ export default async function MedicineEndingPage() {
   // course still in the man's hands. That is the complaint this fixes at
   // source; fn_assign_rrr_work no longer erases the date either.
   //
-  // Only dates in the future count. A task due today is today's work and
-  // belongs on this screen, assignment state and all.
-  const bookedAhead = new Set<string>();
-  for (const item of work.data ?? [])
-    if (item.customer_id && !item.completed_at && item.due_on > today)
-      bookedAhead.add(item.customer_id);
+  // A booked retry or promised callback is owned by Due today / Upcoming.
+  // Any open follow-up is a Due Today / Upcoming task, not a fresh Medicine
+  // Ending call. This keeps a "not picked" retry out of this queue.
+  const openFollowupCustomers = new Set<string>();
   for (const followup of openFollowups.data ?? [])
-    if (followup.customer_id && followup.due_at
-      && istDateFromTimestamp(followup.due_at) > today)
-      bookedAhead.add(followup.customer_id);
+    if (followup.customer_id) openFollowupCustomers.add(followup.customer_id);
 
   // What the customer themselves said.
   //
   // Delivery date + course length is a guess: it assumes the box was opened
   // the day it arrived and a dose never missed. When a rep rings and the
-  // customer says "28 days left", that is evidence, and the follow-up the call
-  // books is dated the day that medicine runs out (fn_log_assigned_rrr_call
-  // insists on exactly that date for this outcome). Without it, somebody who
+  // customer says "28 days left", that is evidence. The call preserves that
+  // date, so this list can reopen three days before it. Without it, somebody who
   // told us on 17 Sep that their medicine runs to mid-October was back on this
   // list on the 19th, and got rung again about the same course.
   //
@@ -211,24 +205,17 @@ export default async function MedicineEndingPage() {
   // Keyed by customer: the call may have been logged against another of their
   // orders, and it still describes the medicine in their hands today.
   const saidOn = new Map<string, string>();
+  const statedEndsOn = new Map<string, string>();
   for (const call of medicineCalls.data ?? []) {
     if (!call.customer_id || !call.completed_at) continue;
     const day = istDateFromTimestamp(call.completed_at);
     const known = saidOn.get(call.customer_id);
-    if (!known || day > known) saidOn.set(call.customer_id, day);
-  }
-  // The booked follow-up carries the date itself. Only one dated on or after
-  // the call counts, so an older promise left open on the same customer cannot
-  // be mistaken for the medicine running out.
-  const statedEndsOn = new Map<string, string>();
-  for (const followup of openFollowups.data ?? []) {
-    if (!followup.customer_id || !followup.due_at) continue;
-    const said = saidOn.get(followup.customer_id);
-    if (!said) continue;
-    const due = istDateFromTimestamp(followup.due_at);
-    if (due < said) continue;
-    const known = statedEndsOn.get(followup.customer_id);
-    if (!known || due > known) statedEndsOn.set(followup.customer_id, due);
+    if (known && day < known) continue;
+    saidOn.set(call.customer_id, day);
+    // The completed call records the actual remaining days. It lets this list
+    // retain the true end date and re-open exactly three days before it.
+    const remaining = call.remark?.match(/Medicine remaining:\s*(\d+)\s*days/i)?.[1];
+    if (remaining) statedEndsOn.set(call.customer_id, addDaysIso(day, Number(remaining)));
   }
 
   // One row per customer: the course they are actually on.
@@ -285,9 +272,11 @@ export default async function MedicineEndingPage() {
     .filter((o) => {
       const customer = o.customers;
       if (!customer || customer.merged_into_id || !o.delivered_at) return false;
+      // Past 180 days since their last order: not a call — see MAX_DAYS_SINCE_ORDER.
+      if (isPastRrrWindow(customer.last_order_at, today)) return false;
       if (!currentCourse.has(o.id)) return false;
       if (hasReordered(o.customer_id, o.created_at)) return false;
-      if (bookedAhead.has(o.customer_id)) return false;
+      if (openFollowupCustomers.has(o.customer_id)) return false;
       return !calledSince.has(o.customer_id);
     })
     .map((o): MedicineEndingRow => {
@@ -337,7 +326,18 @@ export default async function MedicineEndingPage() {
     })
     .sort((a, b) => a.days_left - b.days_left || b.amount - a.amount);
 
-  return <MedicineEndingTable rows={rows} numbers={(numbers.data ?? []) as ContactNumber[]}
+  // Only the three-day pre-end window belongs here: day 12 for a 15-day
+  // course, day 27 for a 30-day course. Due and overdue calls stay elsewhere.
+  const endingSoonRows = rows.filter((row) => row.days_left >= 0 && row.days_left <= 3);
+
+  // This is an assignment queue, not a report of work already handed out.
+  // Keep outstanding assignments out at the data boundary as well as the
+  // client-side filter, so stale client state cannot put struck-through rows
+  // back on the screen.
+  const assignableRows = endingSoonRows.filter((row) =>
+    !row.is_dnd && !(row.assigned_to && !row.last_outcome && !row.completed_at));
+
+  return <MedicineEndingTable rows={assignableRows} numbers={(numbers.data ?? []) as ContactNumber[]}
     preferredNumberId={(usualNumber.data as string | null) ?? null}
     reps={reps.data ?? []} canAssign={CAN_ASSIGN.includes(me?.role ?? '')}
     canLog={me?.role !== 'auditor'} today={today} />;

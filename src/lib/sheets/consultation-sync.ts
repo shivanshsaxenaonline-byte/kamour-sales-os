@@ -402,8 +402,10 @@ export async function syncConsultationSheet(): Promise<ConsultationSyncResult> {
             age: snapshot.customer_age,
             state: snapshot.customer_state,
             first_source_id: sourceId,
+            // The sheet's salesperson columns are source history, not an
+            // assignment instruction. Customers enter the CRM unassigned;
+            // only the explicit assignment actions may set an owner.
             original_owner_id: owner,
-            current_owner_id: owner,
           })
           .select("id,phone_e164,full_name,age,state,current_owner_id,original_owner_id")
           .single();
@@ -420,7 +422,6 @@ export async function syncConsultationSheet(): Promise<ConsultationSyncResult> {
           customer_name: "full_name",
           customer_age: "age",
           customer_state: "state",
-          owner_id: "current_owner_id",
         };
         for (const [sourceKey, targetKey] of Object.entries(customerFields)) {
           // A blank Sheet name must never erase the CRM's required customer name.

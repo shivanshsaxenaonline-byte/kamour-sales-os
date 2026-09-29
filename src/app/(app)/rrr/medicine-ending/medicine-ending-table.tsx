@@ -2,13 +2,15 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { LogCallDialog, type CallTarget, type ContactNumber } from '../log-call-dialog';
 import { CustomerPanel } from '../customer-panel';
 import { assignRrrWork } from '../actions';
 import { dayLong as day, digitsOf, istDateFromTimestamp, money } from '../lib/format';
 import { outcomeLabel } from '../lib/outcomes';
+import { daysSinceOrder, priorityOf, PRIORITY_SORT, sortByPriority } from '../lib/priority';
 import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { PriorityPill } from '../priority-pill';
 import { SortSelect } from '../sort-select';
 
 export type MedicineEndingRow = {
@@ -50,12 +52,15 @@ function endState(days: number) {
 // list. Seven days was too early: on a 30-day course that is a call a full
 // week before there is anything to reorder, and the customer says so — which
 // is the call that teaches them to stop picking up. Three days is the floor's
-// own answer to "when should I ring them", and the 7-day window is still one
-// dropdown option away for anyone who wants to look further ahead.
+// own answer to "when should I ring them". Due and overdue work is shown on
+// its separate queue rather than extending this list.
 const ACTION_LEAD_DAYS = 3;
 
-// How far past the ending date a customer stays on the action list.
-const ACTION_OVERDUE_DAYS = 10;
+/** An open task another rep holds. It cannot be assigned again until the task
+ * is called, completed, or removed. */
+function waitingForCall(row: MedicineEndingRow) {
+  return !!row.assigned_to && !row.last_outcome && !row.completed_at;
+}
 
 export function MedicineEndingTable({
   rows, numbers, preferredNumberId, reps, canAssign, canLog, today,
@@ -72,8 +77,7 @@ export function MedicineEndingTable({
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [duration, setDuration] = useState('all');
-  const [window, setWindow] = useState('action');
-  const [sort, setSort] = useState('ending');
+  const [sort, setSort] = useState(PRIORITY_SORT.value);
   const [calling, setCalling] = useState<CallTarget | null>(null);
   const [openRow, setOpenRow] = useState<MedicineEndingRow | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -81,15 +85,43 @@ export function MedicineEndingTable({
   const [target, setTarget] = useState('');
   const [assigning, startAssignment] = useTransition();
 
+  // This screen is often opened directly, bypassing the Orders workspace
+  // where the sheet sync normally runs. Pull the sheet once so an order joins
+  // this list as soon as its Delivered Date is filled in by Ops.
+  useEffect(() => {
+    void fetch('/api/sheets/orders/sync', { method: 'POST' })
+      .then(async (response) => {
+        if (!response.ok && response.status !== 202) return null;
+        return response.json() as Promise<{ created?: number; updated?: number }>;
+      })
+      .then((result) => {
+        if ((result?.created ?? 0) + (result?.updated ?? 0) > 0) router.refresh();
+      })
+      // Keep the current calling list usable if the source sheet is briefly
+      // unavailable. The next page visit retries the sync.
+      .catch(() => undefined);
+  }, [router]);
+
+  // An outstanding assignment is already on a rep's calling list, so it must
+  // not appear here at all. This queue contains only rows that can be assigned.
+  const actionableRows = useMemo(() => rows.filter((row) => {
+    if (row.is_dnd) return false;
+    return !waitingForCall(row);
+  }), [rows]);
+
+  // A course running out now, on a customer who bought within 75 days, is the
+  // order moment itself.
+  const priority = useMemo(() => new Map(rows.map((r) => {
+    const days = daysSinceOrder(r.last_order_at, today);
+    const courseEnding = r.days_left >= 0 && r.days_left <= ACTION_LEAD_DAYS;
+    return [r.order_id, { days, tier: priorityOf({ daysSinceOrder: days, orders: r.lifetime_orders, ltv: r.ltv, courseEnding }) }];
+  })), [rows, today]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     const digits = digitsOf(q);
-    const kept = rows.filter((r) => {
+    const kept = actionableRows.filter((r) => {
       if (duration !== 'all' && r.course_duration_days !== Number(duration)) return false;
-      if (window === 'action'
-        && (r.days_left < -ACTION_OVERDUE_DAYS || r.days_left > ACTION_LEAD_DAYS)) return false;
-      if (window === 'ending' && (r.days_left < 0 || r.days_left > 7)) return false;
-      if (window === 'overdue' && r.days_left >= 0) return false;
       if (q) {
         const byName = r.full_name.toLowerCase().includes(q);
         const byPhone = digits.length > 0 && digitsOf(r.phone_e164).includes(digits);
@@ -100,16 +132,14 @@ export function MedicineEndingTable({
     });
     // The rows arrive ending-soonest first; "amount" is this order's value.
     if (sort === 'amount') return [...kept].sort((a, b) => b.amount - a.amount);
+    if (sort === PRIORITY_SORT.value) return sortByPriority(kept, (r) => priority.get(r.order_id)!.tier);
     return sortByValue(kept, sort, (r) => ({
       ltv: r.ltv, orders: r.lifetime_orders, last_order_at: r.last_order_at, name: r.full_name,
     }));
-  }, [rows, search, duration, window, sort]);
+  }, [actionableRows, search, duration, sort, priority]);
 
-  const actionCount = rows.filter((r) =>
-    r.days_left >= -ACTION_OVERDUE_DAYS && r.days_left <= ACTION_LEAD_DAYS).length;
-  const endingCount = rows.filter((r) => r.days_left >= 0 && r.days_left <= 7).length;
-  const overdueCount = rows.filter((r) => r.days_left < 0).length;
-  const selectable = visible.filter((row) => !row.is_dnd).map((row) => row.order_id);
+  const actionCount = actionableRows.length;
+  const selectable = visible.filter((row) => !row.is_dnd && !waitingForCall(row)).map((row) => row.order_id);
   const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
 
   function assignSelected() {
@@ -142,7 +172,7 @@ export function MedicineEndingTable({
           <Link href="/rrr/medicine-ending" className="active" aria-current="page">Medicine Ending<span>{actionCount}</span></Link>
         </div>
         <span className="muted">
-          Showing {visible.length.toLocaleString('en-IN')} of {rows.length.toLocaleString('en-IN')} customers on a delivered course · today {day(today)}
+          Showing {visible.length.toLocaleString('en-IN')} of {actionableRows.length.toLocaleString('en-IN')} assignable customers on a delivered course · today {day(today)}
         </span>
         {message ? <span className="muted" role="status">{message}</span> : null}
       </div>
@@ -179,15 +209,6 @@ export function MedicineEndingTable({
             />
           </label>
           <label className="rrr-field">
-            <span>Window</span>
-            <select value={window} onChange={(e) => setWindow(e.target.value)}>
-              <option value="action">Action list · ending in {ACTION_LEAD_DAYS} days ({actionCount})</option>
-              <option value="ending">Ending in 7 days ({endingCount})</option>
-              <option value="overdue">Already ended ({overdueCount})</option>
-              <option value="all">All current 15/30 day courses</option>
-            </select>
-          </label>
-          <label className="rrr-field">
             <span>Course duration</span>
             <select value={duration} onChange={(e) => setDuration(e.target.value)}>
               <option value="all">15d and 30d</option>
@@ -196,8 +217,8 @@ export function MedicineEndingTable({
             </select>
           </label>
           <SortSelect id="medicine-ending-sort" value={sort} onChange={setSort}
-            first={{ value: 'ending', label: 'Ending soonest (default)' }}
-            options={[...VALUE_SORTS.slice(0, 2), { value: 'amount', label: 'Highest order amount first' },
+            first={PRIORITY_SORT}
+            options={[{ value: 'ending', label: 'Ending soonest' }, ...VALUE_SORTS.slice(0, 2), { value: 'amount', label: 'Highest order amount first' },
               ...VALUE_SORTS.slice(2)]} />
         </div>
       </div>
@@ -224,13 +245,11 @@ export function MedicineEndingTable({
             {visible.map((r) => {
               const state = endState(r.days_left);
               const assignee = r.assigned_to ? reps.find((rep) => rep.id === r.assigned_to)?.full_name ?? 'Assigned' : null;
-              // Handed to a rep who has not logged a call on it yet: struck
-              // through until they do.
-              const waiting = !!assignee && !r.last_outcome && !r.completed_at;
+              const waiting = waitingForCall(r);
               return (
                 <tr key={r.order_id} className={`record-row ${waiting ? 'assigned-waiting' : ''}`}>
                   {canAssign ? (
-                    <td className="no-strike"><input type="checkbox" checked={selected.has(r.order_id)} disabled={r.is_dnd}
+                    <td className="no-strike"><input type="checkbox" checked={selected.has(r.order_id)} disabled={r.is_dnd || waiting}
                       onChange={() => setSelected((current) => {
                         const next = new Set(current);
                         if (next.has(r.order_id)) next.delete(r.order_id); else next.add(r.order_id);
@@ -244,6 +263,7 @@ export function MedicineEndingTable({
                         <span className="muted">{r.phone_e164}{r.is_dnd ? ' · DND' : ''}</span>
                       </span>
                     </button>
+                    <PriorityPill priority={priority.get(r.order_id)!.tier} days={priority.get(r.order_id)!.days} />
                   </td>
                   <td>{r.order_no}</td>
                   <td className="num">{money(r.amount)}</td>

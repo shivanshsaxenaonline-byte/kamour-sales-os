@@ -1,0 +1,3 @@
+-- The data clean-up in the matching up migration is intentionally retained:
+-- reopening obsolete end-date reminders would recreate duplicate calls.
+-- Reverting application code does not require a database data reversal.

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { addDaysIso, daysBetween, istDateFromTimestamp, istToday } from '../lib/format';
 import { repNote } from '../lib/notes';
+import { isPastRrrWindow } from '../lib/priority';
 import { DueTodayView, type DueRow } from './due-view';
 
 export const dynamic = 'force-dynamic';
@@ -120,6 +121,10 @@ export default async function DueTodayPage() {
     const customer = customers.get(customerId);
     // DND and merged customers are not calls anyone should make.
     if (!customer || customer.is_dnd || customer.merged_into_id) return [];
+    // Past 180 days since their last order a follow-up is not a call worth
+    // making — see MAX_DAYS_SINCE_ORDER. The follow-up stays open; it is just
+    // not on the list.
+    if (isPastRrrWindow(customer.last_order_at, today)) return [];
     const open = openByCustomer.get(customerId);
     const prev = lastCall.get(customerId);
     let dueAt: string | null;

@@ -5,9 +5,11 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { Icon } from '@/components/Icon';
 import { CustomerPanel } from '../customer-panel';
 import { LogCallDialog, type CallTarget, type ContactNumber } from '../log-call-dialog';
-import { dayLong, money } from '../lib/format';
+import { dayLong, daysBetween, money } from '../lib/format';
 import { outcomeLabel } from '../lib/outcomes';
+import { daysSinceOrder, isPromise, priorityOf, PRIORITY_SORT, sortByPriority, type Priority } from '../lib/priority';
 import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { PriorityPill } from '../priority-pill';
 import { SortSelect } from '../sort-select';
 import { markPotentialLead, removePotentialLead } from '../potential-leads-action';
 import { workSourceLabel, workSourceTone, type WorkSource } from '@/lib/work-tags';
@@ -71,7 +73,7 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
 }) {
   const router = useRouter();
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('due');
+  const [sort, setSort] = useState(PRIORITY_SORT.value);
   const [calling, setCalling] = useState<CallTarget | null>(null);
   const [viewing, setViewing] = useState<MyWorkRow | null>(null);
   const [viewingPotential, setViewingPotential] = useState<PotentialLeadRow | null>(null);
@@ -128,14 +130,29 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
   const list = searching
     ? rows.filter((row) => !done.has(row.id))
     : tab === 'today' ? pending : tab === 'upcoming' ? upcoming : [];
-  const visible = useMemo(() => sortByValue(list.filter((row) => {
-    const query = search.trim().toLowerCase();
-    const digits = query.replace(/\D/g, '');
-    return !query || row.full_name.toLowerCase().includes(query)
-      || (digits.length > 0 && row.phone_e164.includes(digits));
-  }), sort, (row) => ({
-    ltv: row.ltv, orders: row.lifetime_orders, last_order_at: row.last_order_at, name: row.full_name,
-  })), [list, search, sort]);
+  // A WATI hand-over has no order behind it to rank by; somebody just said on
+  // WhatsApp that they are interested, so it goes up with P1 and wears no tag.
+  const priority = useMemo(() => new Map(rows.map((row) => {
+    const days = daysSinceOrder(row.last_order_at, today);
+    const left = row.medicine_ends_on ? daysBetween(today, row.medicine_ends_on) : null;
+    const tier: Priority | null = row.source === 'wati_interested' ? null : priorityOf({
+      daysSinceOrder: days, orders: row.lifetime_orders, ltv: row.ltv,
+      promise: isPromise(row.last_outcome), courseEnding: left != null && left >= -10 && left <= 3,
+    });
+    return [row.id, { days, tier }];
+  })), [rows, today]);
+  const visible = useMemo(() => {
+    const kept = list.filter((row) => {
+      const query = search.trim().toLowerCase();
+      const digits = query.replace(/\D/g, '');
+      return !query || row.full_name.toLowerCase().includes(query)
+        || (digits.length > 0 && row.phone_e164.includes(digits));
+    });
+    if (sort === PRIORITY_SORT.value) return sortByPriority(kept, (row) => priority.get(row.id)?.tier ?? 'p1');
+    return sortByValue(kept, sort, (row) => ({
+      ltv: row.ltv, orders: row.lifetime_orders, last_order_at: row.last_order_at, name: row.full_name,
+    }));
+  }, [list, search, sort, priority]);
   const activePotentialLeads = useMemo(() =>
     potentialLeads.filter((lead) => !localRemoved.has(lead.id)),
     [potentialLeads, localRemoved],
@@ -268,7 +285,7 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
         </label>
         {tab !== 'potential' ? (
           <SortSelect id="my-work-sort" value={sort} onChange={setSort}
-            first={{ value: 'due', label: 'Due date (default)' }} options={VALUE_SORTS} />
+            first={PRIORITY_SORT} options={[{ value: 'due', label: 'Due date' }, ...VALUE_SORTS]} />
         ) : null}
         </div>
       </div>
@@ -329,7 +346,9 @@ export function MyWorkList({ rows, potentialLeads, numbers, preferredNumberId, t
                 style={{ cursor: 'pointer' }}>
                 <td><strong>{row.full_name}</strong><br /><span className="muted">{row.phone_e164}</span>
                   {row.lifetime_orders ? <><br /><span className="muted">
-                    LTV {money(row.ltv)} · {row.lifetime_orders} {row.lifetime_orders === 1 ? 'order' : 'orders'}</span></> : null}</td>
+                    LTV {money(row.ltv)} · {row.lifetime_orders} {row.lifetime_orders === 1 ? 'order' : 'orders'}</span></> : null}
+                  {priority.get(row.id)?.tier ? <><br />
+                    <PriorityPill priority={priority.get(row.id)!.tier!} days={priority.get(row.id)!.days} /></> : null}</td>
                 <td><span className={`status-pill ${workSourceTone(row.source)}`}>
                   {workSourceLabel(row.source)}
                 </span></td>

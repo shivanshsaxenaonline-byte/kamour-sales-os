@@ -103,11 +103,9 @@ export function LogCallDialog({
     }
     // Order placed carries no next date at all — the new order raises the next
     // call itself, when its course runs out.
-    const nextDueOn = outcome === 'order_placed'
+    const nextDueOn = outcome === 'order_placed' || outcome === 'medicine_not_finished'
       ? null
-      : outcome === 'medicine_not_finished'
-        ? nextOn
-        : outcome === 'interested' || outcome === 'other' ? istTodayPlus(1) : nextOn || null;
+      : outcome === 'interested' || outcome === 'other' ? istTodayPlus(1) : nextOn || null;
     setError(null);
     startTransition(async () => {
       const result = await logCall({
@@ -169,7 +167,7 @@ export function LogCallDialog({
               min={istTodayPlus(1)} max={istTodayPlus(365)}
               value={nextOn} onChange={(event) => setNextOn(event.target.value)} />
             {nextOn && daysBetween(istToday(), nextOn) >= 1
-              ? <span className="muted">{daysBetween(istToday(), nextOn)} din ki dawai bachi hai · agla follow-up {nextOn} ko.</span>
+              ? <span className="muted">{daysBetween(istToday(), nextOn)} din ki dawai bachi hai · Medicine Ending mein {istTodayPlus(Math.max(1, daysBetween(istToday(), nextOn) - 3))} ko aayega.</span>
               : null}
           </label>
         ) : null}

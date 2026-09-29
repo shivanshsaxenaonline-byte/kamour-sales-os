@@ -246,7 +246,6 @@ export async function syncZohoRecords(ids: string[]): Promise<SyncResult> {
         primary_concern_id: concernId,
         first_source_id: sourceId,
         original_owner_id: owner,
-        current_owner_id: owner,
         created_at: created,
       }).select('id').maybeSingle();
 
@@ -268,7 +267,6 @@ export async function syncZohoRecords(ids: string[]): Promise<SyncResult> {
 
     const shared = {
       concern_id: concernId,
-      owner_id: owner,
       utm_source: blank(str(rec.UTM_Source)) ? null : str(rec.UTM_Source),
       utm_medium: blank(str(rec.UTM_Medium)) ? null : str(rec.UTM_Medium),
       utm_campaign: blank(str(rec.UTM_Campaign)) ? null : str(rec.UTM_Campaign),
@@ -311,9 +309,8 @@ export async function syncZohoRecords(ids: string[]): Promise<SyncResult> {
       else result.created++;
     }
 
-    // Keep the customer's own idea of who owns them current, the way the
-    // importer's final pass did.
-    if (owner) await db.from('customers').update({ current_owner_id: owner }).eq('id', customerId);
+    // Zoho's Follow_up_Done_By is historical source data. It must never
+    // assign a CRM lead or customer; assignments are deliberate UI actions.
   }
 
   return result;

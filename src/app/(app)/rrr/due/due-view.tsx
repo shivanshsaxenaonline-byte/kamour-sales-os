@@ -6,7 +6,9 @@ import { assignRrrWork } from '../actions';
 import { CustomerPanel } from '../customer-panel';
 import { dayInYear, digitsOf, money } from '../lib/format';
 import { outcomeLabel, outcomeTone } from '../lib/outcomes';
+import { daysSinceOrder, isPromise, priorityOf, PRIORITY_SORT, sortByPriority } from '../lib/priority';
 import { sortByValue, VALUE_SORTS } from '../lib/sort';
+import { PriorityPill } from '../priority-pill';
 import { SortSelect } from '../sort-select';
 
 export type DueRow = {
@@ -57,7 +59,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
   const [reason, setReason] = useState('all');
   const [rep, setRep] = useState('all');
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('overdue');
+  const [sort, setSort] = useState(PRIORITY_SORT.value);
   const [open, setOpen] = useState<DueRow | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [target, setTarget] = useState('');
@@ -67,6 +69,11 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
   const todayCount = rows.filter((r) => r.overdue_days === 0).length;
   const overdueCount = rows.length - todayCount;
   const reasons = useMemo(() => [...new Set(rows.map((r) => r.reason ?? 'none'))], [rows]);
+
+  const priority = useMemo(() => new Map(rows.map((r) => {
+    const days = daysSinceOrder(r.last_order_at, today);
+    return [r.id, { days, tier: priorityOf({ daysSinceOrder: days, orders: r.lifetime_orders, ltv: r.ltv, promise: isPromise(r.reason) }) }];
+  })), [rows, today]);
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -80,10 +87,11 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
       if (q && !r.full_name.toLowerCase().includes(q) && !(digits && digitsOf(r.phone_e164).includes(digits))) return false;
       return true;
     }).sort((a, b) => b.overdue_days - a.overdue_days || a.full_name.localeCompare(b.full_name));
+    if (sort === PRIORITY_SORT.value) return sortByPriority(kept, (r) => priority.get(r.id)!.tier);
     return sortByValue(kept, sort, (r) => ({
       ltv: r.ltv, orders: r.lifetime_orders, last_order_at: r.last_order_at, name: r.full_name,
     }));
-  }, [rows, when, reason, rep, search, sort]);
+  }, [rows, when, reason, rep, search, sort, priority]);
 
   // The header box covers what the filters show; selection outside it stays.
   const shownIds = useMemo(() => shown.map((r) => r.customer_id), [shown]);
@@ -164,7 +172,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
           {reps.map((r) => <option key={r.id} value={r.full_name}>{r.full_name}</option>)}
         </select>
         <SortSelect id="due-sort" inToolbar value={sort} onChange={setSort}
-          first={{ value: 'overdue', label: 'Most overdue first (default)' }} options={VALUE_SORTS} />
+          first={PRIORITY_SORT} options={[{ value: 'overdue', label: 'Most overdue first' }, ...VALUE_SORTS]} />
       </div>
 
       {canAssign ? (
@@ -222,6 +230,7 @@ export function DueTodayView({ rows, today, reps, canAssign }: {
                         <span className="muted">{r.phone_e164}</span>
                       </span>
                     </button>
+                    <PriorityPill priority={priority.get(r.id)!.tier} days={priority.get(r.id)!.days} />
                   </td>
                   <td className="num">{money(r.ltv)}
                     <br /><span className="muted">{r.lifetime_orders} {r.lifetime_orders === 1 ? 'order' : 'orders'}</span></td>

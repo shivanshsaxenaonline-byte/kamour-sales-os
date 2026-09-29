@@ -68,8 +68,8 @@ export async function logCall(
     if (!Number.isInteger(input.medicineDaysLeft) || input.medicineDaysLeft! < 1
       || input.medicineDaysLeft! > 365)
       return { ok: false, error: 'Enter 1 to 365 medicine days remaining.' };
-    if (input.nextDueOn !== istTodayPlus(input.medicineDaysLeft!))
-      return { ok: false, error: 'Next call should be when medicine runs out.' };
+    if (input.nextDueOn !== null)
+      return { ok: false, error: 'Medicine Ending will bring this customer back three days before the stated end date.' };
   } else if (input.medicineDaysLeft != null) {
     return { ok: false, error: 'Medicine days only apply to medicine not finished.' };
   }
@@ -219,6 +219,9 @@ export async function logCall(
   }
 
   revalidatePath('/rrr');
+  revalidatePath('/rrr/medicine-ending');
+  revalidatePath('/rrr/due');
+  revalidatePath('/rrr/my');
   revalidatePath('/today');
   return { ok: true, scheduledNext };
 }
